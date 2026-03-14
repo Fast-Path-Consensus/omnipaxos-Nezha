@@ -34,7 +34,8 @@ pub mod unicache;
 pub mod util;
 /// A module containing helper functions and structs.
 pub mod utils;
-mod clock;
+/// A module containing a clock simulator.
+pub mod clock;
 
 #[cfg(feature = "macros")]
 #[allow(unused_imports)]

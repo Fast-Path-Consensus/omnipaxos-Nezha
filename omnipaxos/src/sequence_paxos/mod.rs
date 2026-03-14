@@ -15,6 +15,8 @@ use crate::{
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
 use std::{fmt::Debug, vec};
+use std::time::Duration;
+use crate::clock::{ClockSimulator, ClockSimError};
 
 pub mod follower;
 pub mod leader;
@@ -41,6 +43,7 @@ where
     cached_promise_message: Option<Promise<T>>,
     #[cfg(feature = "logging")]
     logger: Logger,
+    clock: ClockSimulator,
 }
 
 impl<T, B> SequencePaxos<T, B>
@@ -108,6 +111,12 @@ where
                     create_logger(s.as_str())
                 }
             },
+            clock: ClockSimulator::new(
+                config.clock_drift_us_per_s, // Values based on profile in OmniPaxos_rs.
+                config.clock_uncertainty_us,
+                config.clock_sync_interval_ms,
+            ).expect("REASON"),
+            early_buffer: vec![],
         };
         paxos
             .internal_storage
@@ -486,6 +495,10 @@ pub(crate) struct SequencePaxosConfig {
     logger_file_path: Option<String>,
     #[cfg(feature = "logging")]
     custom_logger: Option<Logger>,
+
+    clock_drift_us_per_s: f64,
+    clock_uncertainty_us: i64,
+    clock_sync_interval_ms: Duration,
 }
 
 impl From<OmniPaxosConfig> for SequencePaxosConfig {
@@ -507,6 +520,10 @@ impl From<OmniPaxosConfig> for SequencePaxosConfig {
             logger_file_path: config.server_config.logger_file_path,
             #[cfg(feature = "logging")]
             custom_logger: config.server_config.custom_logger,
+
+            clock_drift_us_per_s: config.server_config.clock.drift_us_per_s,
+            clock_uncertainty_us: config.server_config.clock.uncertainty,
+            clock_sync_interval_ms: Duration::from_millis(config.server_config.clock.sync_interval_ms),
         }
     }
 }
