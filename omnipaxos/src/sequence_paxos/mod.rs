@@ -116,7 +116,6 @@ where
                 config.clock_uncertainty_us,
                 config.clock_sync_interval_ms,
             ).expect("REASON"),
-            early_buffer: vec![],
         };
         paxos
             .internal_storage
