@@ -153,6 +153,36 @@ pub mod sequence_paxos {
         Snapshot(Option<usize>),
     }
 
+
+    #[allow(missing_docs)]
+    #[derive(Clone, Debug)]
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+    pub enum NezhaMsg<T>
+    where
+        T: Entry,
+    {
+        DeadlinedRequest(DeadlinedRequest<T>),
+        //FastReply(FastReply),
+        //SlowReply(SlowReply),
+        //LogModification(LogModification),
+    }
+
+    /// An OmniPaxos command wrapped inside a DeadlinedRequest with added send_time and deadline.
+    #[derive(Clone, Debug)]
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+    pub struct DeadlinedRequest<T>
+    where
+        T: Entry,
+    {
+        /// The original entry/command.
+        pub entry: T,
+        /// The local send timestamp attached to the request.
+        pub send_time: i64,
+        /// The computed deadline / DOM value for the request.
+        pub deadline: i64
+    }
+
+
     /// An enum for all the different message types.
     #[allow(missing_docs)]
     #[derive(Clone, Debug)]
@@ -176,6 +206,8 @@ pub mod sequence_paxos {
         Compaction(Compaction),
         AcceptStopSign(AcceptStopSign),
         ForwardStopSign(StopSign),
+
+        NezhaMsg(NezhaMsg<T>),
     }
 
     /// A struct for a Paxos message that also includes sender and receiver.
@@ -192,6 +224,8 @@ pub mod sequence_paxos {
         /// The message content.
         pub msg: PaxosMsg<T>,
     }
+
+
 }
 
 /// The different messages BLE uses to communicate with other servers.
