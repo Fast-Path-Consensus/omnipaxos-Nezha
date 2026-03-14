@@ -539,10 +539,34 @@ where
                     }
                 }
             } else {
+                // the deadline has not passed yet
                 break;
             }
         }
     }
+
+
+
+    /// Returns the number of microseconds until the next message in the early_buffer expires.
+    /// Returns Some(0) if a message is already expired and ready to process.
+    /// Returns None if the buffer is empty.
+    pub(crate) fn time_for_next_tick(&self) -> Option<u64> {
+        if let Some(top) = self.early_buffer.peek() {
+            let current_time = self.clock.get_time();
+
+            if top.deadline > current_time {
+                // Future deadline: Calculate how long to wait (+ uncertainty for safety)
+                let wait_time = (top.deadline - current_time) + self.clock.get_uncertainty();
+                Some(wait_time as u64)
+            } else {
+                // The deadline has already passed! We should wake up immediately (0 wait time)
+                Some(0)
+            }
+        } else {
+            None
+        }
+    }
+
 
 
 
