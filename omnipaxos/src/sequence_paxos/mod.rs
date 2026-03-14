@@ -514,7 +514,35 @@ where
     }
 
 
+    /// Checks the early_buffer and processes any messages whose deadlines have passed.
+    /// This should be called periodically by your tick() function.
+    pub(crate) fn process_early_buffer(&mut self) {
+        let current_time = self.clock.get_time();
 
+        while let Some(top) = self.early_buffer.peek() {
+
+            // we just check if current_time has reached the deadline!
+            if top.deadline <= current_time {
+                if let Some(request) = self.early_buffer.pop() {
+
+                    self.last_popped_deadline = request.deadline;
+
+                    match self.state.0 {
+                        Role::Leader => {
+                            // TODO: Implement Leader logic here
+                            println!("Leader: Executing request with deadline {}", request.deadline);
+                        },
+                        Role::Follower => {
+                            // TODO: Implement Follower logic here
+                            println!("Follower: Logging request with deadline {}", request.deadline);
+                        }
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+    }
 
 
 

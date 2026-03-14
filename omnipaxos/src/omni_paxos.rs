@@ -386,6 +386,8 @@ where
         if self.flush_batch_clock.tick_and_check_timeout() {
             self.seq_paxos.flush_batch_timeout();
         }
+        self.seq_paxos.process_early_buffer();
+
     }
 
     /// Manually attempt to become the leader by incrementing this instance's Ballot. Calling this
