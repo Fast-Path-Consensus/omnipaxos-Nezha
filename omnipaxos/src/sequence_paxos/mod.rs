@@ -2,6 +2,7 @@ use super::{ballot_leader_election::Ballot, messages::sequence_paxos::*, util::L
 #[cfg(feature = "logging")]
 use crate::utils::logger::create_logger;
 use crate::{
+    clock::ClockSimulator,
     messages::Message,
     storage::{
         internal_storage::{InternalStorage, InternalStorageConfig},
@@ -15,6 +16,7 @@ use crate::{
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
 use std::{fmt::Debug, vec};
+use std::collections::BinaryHeap;
 
 pub mod follower;
 pub mod leader;
@@ -41,7 +43,46 @@ where
     cached_promise_message: Option<Promise<T>>,
     #[cfg(feature = "logging")]
     logger: Logger,
+
+    // nezha implementation
+    clock: ClockSimulator,
+    early_buffer: BinaryHeap<DeadlineRequest<T>>,
+    late_buffer: Vec<T>,
+
+    last_popped_deadline: i64,
+
 }
+
+// the logic for creating the ordering logic for the deadline requests of the binary heap
+
+use std::cmp::Ordering;
+// are two deadlines equal?
+impl<T: Entry> PartialEq for DeadlineRequest<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.deadline == other.deadline
+    }
+}
+impl<T: Entry> Eq for DeadlineRequest<T> {}
+
+// are two deadlines less than each other?
+impl<T: Entry> PartialOrd for DeadlineRequest<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: Entry> Ord for DeadlineRequest<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse ordering to make BinaryHeap a min-heap (earliest deadline pops first)
+        other.deadline.cmp(&self.deadline)
+    }
+
+}
+
+
+
+
+
 
 impl<T, B> SequencePaxos<T, B>
 where
@@ -80,10 +121,20 @@ where
         let internal_storage_config = InternalStorageConfig {
             batch_size: config.batch_size,
         };
+
+        // Initialize clock with default parameters
+        use std::time::Duration;
+        let clock = ClockSimulator::new(
+            100.0,                          // drift_rate: 100µs per second
+            1000,                           // uncertainty: 1ms
+            Duration::from_secs(1),         // sync_interval: 1 second
+        ).expect("Failed to create ClockSimulator");
+
         let mut paxos = SequencePaxos {
             internal_storage: InternalStorage::with(
                 storage,
                 internal_storage_config,
+
                 #[cfg(feature = "unicache")]
                 pid,
             ),
@@ -108,6 +159,10 @@ where
                     create_logger(s.as_str())
                 }
             },
+            clock,
+            early_buffer: BinaryHeap::new(),
+            late_buffer: Vec::new(),
+            last_popped_deadline: 0,
         };
         paxos
             .internal_storage
@@ -280,6 +335,29 @@ where
             PaxosMsg::ForwardStopSign(f_ss) => self.handle_forwarded_stopsign(f_ss),
         }
     }
+
+
+    /// Handles incoming Nezha-specific messages
+    fn handle_nezha(&mut self, msg: NezhaMsg<T>, from: NodeId) {
+        // Evaluate the DOM (Deadline Of Message) against the LAST processed deadline
+        // If it's >= the last popped deadline, it is safe to buffer.
+        if msg.deadline >= self.last_popped_deadline {
+
+            let request = DeadlineRequest {
+                deadline: msg.deadline, 
+                message: msg,
+            };
+            self.early_buffer.push(request);
+
+        } else {
+            // FAILURE: We already moved past this deadline!
+            // This means we already popped and processed a message that was supposed
+            // to come AFTER this one. So this message is officially LATE.
+            self.late_buffer.push(msg.entry);
+        }
+    }
+
+
 
     /// Returns whether this Sequence Paxos has been reconfigured
     pub(crate) fn is_reconfigured(&self) -> Option<StopSign> {

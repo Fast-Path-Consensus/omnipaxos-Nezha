@@ -373,6 +373,9 @@ where
     /// Increments the internal logical clock. This drives the processes for leader changes, resending dropped messages, and flushing batched log entries.
     /// Each of these is triggered every `election_tick_timeout`, `resend_message_tick_timeout`, and `flush_batch_tick_timeout` number of calls to this function
     /// (See how to configure these timeouts in `ServerConfig`).
+    ///
+    /// This function is called periodically to drive the Paxos algorithm's internal timers and timeouts.
+    /// we want to add to it and make sure that when we get a nezha message it is handled appropriately.
     pub fn tick(&mut self) {
         if self.election_clock.tick_and_check_timeout() {
             self.election_timeout();
