@@ -46,7 +46,7 @@ where
 
     // nezha implementation
     clock: ClockSimulator,
-    early_buffer: BinaryHeap<DeadlineRequest<T>>,
+    early_buffer: BinaryHeap<DeadlinedRequest<T>>,
     late_buffer: Vec<T>,
 
     last_popped_deadline: i64,
@@ -57,21 +57,21 @@ where
 
 use std::cmp::Ordering;
 // are two deadlines equal?
-impl<T: Entry> PartialEq for DeadlineRequest<T> {
+impl<T: Entry> PartialEq for DeadlinedRequest<T> {
     fn eq(&self, other: &Self) -> bool {
         self.deadline == other.deadline
     }
 }
-impl<T: Entry> Eq for DeadlineRequest<T> {}
+impl<T: Entry> Eq for DeadlinedRequest<T> {}
 
 // are two deadlines less than each other?
-impl<T: Entry> PartialOrd for DeadlineRequest<T> {
+impl<T: Entry> PartialOrd for DeadlinedRequest<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<T: Entry> Ord for DeadlineRequest<T> {
+impl<T: Entry> Ord for DeadlinedRequest<T> {
     fn cmp(&self, other: &Self) -> Ordering {
         // Reverse ordering to make BinaryHeap a min-heap (earliest deadline pops first)
         other.deadline.cmp(&self.deadline)
@@ -338,27 +338,6 @@ where
     }
 
 
-    /// Handles incoming Nezha-specific messages
-    fn handle_nezha(&mut self, msg: NezhaMsg<T>, from: NodeId) {
-        // Evaluate the DOM (Deadline Of Message) against the LAST processed deadline
-        // If it's >= the last popped deadline, it is safe to buffer.
-        if msg.deadline >= self.last_popped_deadline {
-
-            let request = DeadlineRequest {
-                deadline: msg.deadline, 
-                message: msg,
-            };
-            self.early_buffer.push(request);
-
-        } else {
-            // FAILURE: We already moved past this deadline!
-            // This means we already popped and processed a message that was supposed
-            // to come AFTER this one. So this message is officially LATE.
-            self.late_buffer.push(msg.entry);
-        }
-    }
-
-
 
     /// Returns whether this Sequence Paxos has been reconfigured
     pub(crate) fn is_reconfigured(&self) -> Option<StopSign> {
@@ -520,14 +499,26 @@ where
 
     }
 
-    // Checks whether a deadlined request can enter the early buffer or not.
+    /// Checks whether a deadlined request can enter the early buffer or not.
     fn handle_deadlined_request(&mut self, d_req: DeadlinedRequest<T>) {
         println!("Inside handle deadline");
-        //Am i a follower or a leader?
-        //If i am a follower, then i call upon the
 
+        if d_req.deadline > self.last_popped_deadline {
+            // SUCCESS: Den är större! In i min-heapen.
+            self.early_buffer.push(d_req);
+
+        } else {
+            self.late_buffer.push(d_req.entry);
+        }
 
     }
+
+
+
+
+
+
+
 }
 
 
