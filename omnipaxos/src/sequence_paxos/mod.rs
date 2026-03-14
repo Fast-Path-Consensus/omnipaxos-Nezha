@@ -278,6 +278,7 @@ where
             PaxosMsg::Compaction(c) => self.handle_compaction(c),
             PaxosMsg::AcceptStopSign(acc_ss) => self.handle_accept_stopsign(acc_ss),
             PaxosMsg::ForwardStopSign(f_ss) => self.handle_forwarded_stopsign(f_ss),
+            PaxosMsg::NezhaMsg(nezha_msg) => self.handle_nezha_msg(nezha_msg),
         }
     }
 
@@ -430,7 +431,27 @@ where
             stopsign: self.internal_storage.get_stopsign(),
         }
     }
+
+    fn handle_nezha_msg(&mut self, nezha_msg: NezhaMsg<T>) {
+        match nezha_msg {
+            NezhaMsg::DeadlinedRequest(d_request) => {self.handle_deadlined_request(d_request);},
+            //NezhaMsg::FastReply(_) => {}
+            //NezhaMsg::SlowReply(_) => {}
+            //NezhaMsg::LogModification(_) => {}
+        }
+
+    }
+
+    // Checks whether a deadlined request can enter the early buffer or not.
+    fn handle_deadlined_request(&mut self, d_req: DeadlinedRequest<T>) {
+        println!("Inside handle deadline");
+        //Am i a follower or a leader?
+        //If i am a follower, then i call upon the
+
+
+    }
 }
+
 
 #[derive(PartialEq, Debug)]
 pub(crate) enum Phase {

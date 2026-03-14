@@ -167,14 +167,18 @@ pub mod sequence_paxos {
         //LogModification(LogModification),
     }
 
+    /// An OmniPaxos command wrapped inside a DeadlinedRequest with added send_time and deadline.
     #[derive(Clone, Debug)]
     #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
     pub struct DeadlinedRequest<T>
     where
         T: Entry,
     {
+        /// The original entry/command.
         pub entry: T,
+        /// The local send timestamp attached to the request.
         pub send_time: i64,
+        /// The computed deadline / DOM value for the request.
         pub deadline: i64
     }
 
