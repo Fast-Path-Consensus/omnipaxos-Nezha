@@ -1,8 +1,19 @@
+/// Errors that can occur when creating or validating a [`ClockSimulator`].
 #[derive(Debug)]
 pub enum ClockSimError {
-    NegativeUncertainty(i64),
-    ZeroSyncInterval,
+    /// The provided drift rate was negative.
+    ///
+    /// Contains the invalid drift rate.
     NegativeDriftRate(f64),
+    /// The provided uncertainty was negative.
+    ///
+    /// Contains the invalid uncertainty value in microseconds.
+    NegativeUncertainty(i64),
+    /// The provided synchronization interval was zero.
+    ///
+    /// A clock must resynchronize at a strictly positive interval.
+    ZeroSyncInterval,
+
 }
 
 use std::time::{Duration,Instant, SystemTime, UNIX_EPOCH};
@@ -18,6 +29,7 @@ pub struct ClockSimulator {
 
 impl ClockSimulator {
 
+    /// Constructs a new Clock instance.
     pub fn new(drift_rate: f64,uncertainty: i64,sync_interval: Duration)-> Result<Self, ClockSimError>{
 
         if uncertainty < 0 {

@@ -182,6 +182,57 @@ pub struct ServerConfig {
     #[cfg(feature = "logging")]
     #[cfg_attr(feature = "toml_config", serde(skip_deserializing))]
     pub custom_logger: Option<slog::Logger>,
+
+    /// A clock config representing the different clock settings.
+    pub clock: ClockConfig,
+}
+
+/// Represents a given clock configuration.
+///
+/// Accepts low, medium, high configurations.
+#[derive(Clone, Debug)]
+pub struct ClockConfig {
+    /// Clock drift rate in microseconds.
+    pub drift_us_per_s: f64,
+    /// Clock uncertainty in microseconds.
+    pub uncertainty: i64,
+    /// Clock sync interval in milliseconds.
+    pub sync_interval_ms: u64,
+}
+
+impl ClockConfig {
+    /// Clock Profile: Low Quality
+    ///
+    /// ±1ms uncertainty, 100ms sync interval
+    pub fn low() -> Self {
+        Self {
+            drift_us_per_s: 2.0,
+            uncertainty: 1000,
+            sync_interval_ms: 100,
+        }
+    }
+
+    /// Clock Profile: Medium Quality
+    ///
+    /// ±100μs uncertainty, 10ms sync interval
+    pub fn medium() -> Self {
+        Self {
+            drift_us_per_s: 5.0,
+            uncertainty: 100,
+            sync_interval_ms: 10,
+        }
+    }
+
+    /// Clock Profile: High Quality
+    ///
+    /// ±10μs uncertainty, 1ms sync interval
+    pub fn high() -> Self {
+        Self {
+            drift_us_per_s: 10.0,
+            uncertainty: 10,
+            sync_interval_ms: 1,
+        }
+    }
 }
 
 impl ServerConfig {
@@ -216,6 +267,7 @@ impl Default for ServerConfig {
             logger_file_path: None,
             #[cfg(feature = "logging")]
             custom_logger: None,
+            clock: ClockConfig::low(),
         }
     }
 }

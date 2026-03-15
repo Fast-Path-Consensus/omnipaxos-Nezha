@@ -2,7 +2,6 @@ use super::{ballot_leader_election::Ballot, messages::sequence_paxos::*, util::L
 #[cfg(feature = "logging")]
 use crate::utils::logger::create_logger;
 use crate::{
-    clock::ClockSimulator,
     messages::Message,
     storage::{
         internal_storage::{InternalStorage, InternalStorageConfig},
@@ -17,6 +16,8 @@ use crate::{
 use slog::{debug, info, trace, warn, Logger};
 use std::{fmt::Debug, vec};
 use std::collections::BinaryHeap;
+use std::time::Duration;
+use crate::clock::{ClockSimulator, ClockSimError};
 
 pub mod follower;
 pub mod leader;
@@ -159,10 +160,14 @@ where
                     create_logger(s.as_str())
                 }
             },
-            clock,
             early_buffer: BinaryHeap::new(),
             late_buffer: Vec::new(),
             last_popped_deadline: 0,
+            clock: ClockSimulator::new(
+                config.clock_drift_us_per_s, // Values based on profile in OmniPaxos_rs.
+                config.clock_uncertainty_us,
+                config.clock_sync_interval_ms,
+            ).expect("REASON"),
         };
         paxos
             .internal_storage
@@ -336,8 +341,6 @@ where
             PaxosMsg::NezhaMsg(nezha_msg) => self.handle_nezha_msg(nezha_msg),
         }
     }
-
-
 
     /// Returns whether this Sequence Paxos has been reconfigured
     pub(crate) fn is_reconfigured(&self) -> Option<StopSign> {
@@ -607,6 +610,10 @@ pub(crate) struct SequencePaxosConfig {
     logger_file_path: Option<String>,
     #[cfg(feature = "logging")]
     custom_logger: Option<Logger>,
+
+    clock_drift_us_per_s: f64,
+    clock_uncertainty_us: i64,
+    clock_sync_interval_ms: Duration,
 }
 
 impl From<OmniPaxosConfig> for SequencePaxosConfig {
@@ -628,6 +635,10 @@ impl From<OmniPaxosConfig> for SequencePaxosConfig {
             logger_file_path: config.server_config.logger_file_path,
             #[cfg(feature = "logging")]
             custom_logger: config.server_config.custom_logger,
+
+            clock_drift_us_per_s: config.server_config.clock.drift_us_per_s,
+            clock_uncertainty_us: config.server_config.clock.uncertainty,
+            clock_sync_interval_ms: Duration::from_millis(config.server_config.clock.sync_interval_ms),
         }
     }
 }
