@@ -189,8 +189,11 @@ pub struct ServerConfig {
 
 /// Represents a given clock configuration.
 ///
-/// Accepts low, medium, high configurations.
-#[derive(Clone, Debug)]
+/// Supports low-, medium-, and high-quality profiles.
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(any(feature = "serde", feature = "toml_config"), derive(Deserialize))]
+#[cfg_attr(feature = "toml_config", serde(default))]
+#[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct ClockConfig {
     /// Clock drift rate in microseconds.
     pub drift_us_per_s: f64,
