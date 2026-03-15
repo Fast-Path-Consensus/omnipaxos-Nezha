@@ -122,15 +122,6 @@ where
         let internal_storage_config = InternalStorageConfig {
             batch_size: config.batch_size,
         };
-
-        // Initialize clock with default parameters
-        use std::time::Duration;
-        let clock = ClockSimulator::new(
-            100.0,                          // drift_rate: 100µs per second
-            1000,                           // uncertainty: 1ms
-            Duration::from_secs(1),         // sync_interval: 1 second
-        ).expect("Failed to create ClockSimulator");
-
         let mut paxos = SequencePaxos {
             internal_storage: InternalStorage::with(
                 storage,
