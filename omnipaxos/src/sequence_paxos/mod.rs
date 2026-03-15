@@ -22,6 +22,13 @@ use crate::clock::{ClockSimulator, ClockSimError};
 pub mod follower;
 pub mod leader;
 
+
+#[derive(Debug)]
+pub(crate) struct ProcessEarlyBufferResult<T> {
+    pub popped_entries: Vec<T>,
+    pub leader_exec_epoch: Option<Ballot>,
+}
+
 /// a Sequence Paxos replica. Maintains local state of the replicated log, handles incoming messages and produces outgoing messages that the user has to fetch periodically and send using a network implementation.
 /// User also has to periodically fetch the decided entries that are guaranteed to be strongly consistent and linearizable, and therefore also safe to be used in the higher level application.
 /// If snapshots are not desired to be used, use `()` for the type parameter `S`.
@@ -54,9 +61,23 @@ where
 
 }
 
+impl<T, B> SequencePaxos<T, B>
+where
+    T: Entry,
+    B: Storage<T>,
+{
+    pub(crate) fn append_nezha(&mut self, entry: T) {
+        let deadlined_request = DeadlinedRequest {
+            entry,
+        };
+        self.handle_deadlined_request(deadlined_request)
+    }
+}
 // the logic for creating the ordering logic for the deadline requests of the binary heap
 
 use std::cmp::Ordering;
+use crate::storage::StorageResult;
+
 // are two deadlines equal?
 impl<T: Entry> PartialEq for DeadlinedRequest<T> {
     fn eq(&self, other: &Self) -> bool {
@@ -351,6 +372,7 @@ where
         if self.accepted_reconfiguration() {
             Err(ProposeErr::PendingReconfigEntry(entry))
         } else {
+           // self.handle(entry);
             self.propose_entry(entry);
             Ok(())
         }
@@ -490,53 +512,99 @@ where
             //NezhaMsg::SlowReply(_) => {}
             //NezhaMsg::LogModification(_) => {}
         }
-
     }
 
     /// Checks whether a deadlined request can enter the early buffer or not.
     fn handle_deadlined_request(&mut self, d_req: DeadlinedRequest<T>) {
-        println!("Inside handle deadline");
+        let uncertainty = self.clock.get_uncertainty();
 
-        if d_req.deadline > self.last_popped_deadline {
-            // SUCCESS: Den är större! In i min-heapen.
-            self.early_buffer.push(d_req);
-
-        } else {
+        // 1. should the message be in the late buffer
+        if d_req.entry.deadline <= self.last_popped_deadline + uncertainty {
             self.late_buffer.push(d_req.entry);
+            return;
         }
 
+        // 2. drain the buffer to find conlficts
+        let mut current_buffer_contents: Vec<DeadlinedRequest<T>> = self.early_buffer.drain().collect();
+        let mut conflict_detected = false;
+        let mut still_safe = Vec::new();
+
+        for existing in current_buffer_contents {
+
+            let diff = (d_req.deadline - existing.deadline).abs();
+
+            if diff <= uncertainty {
+                // conlfict found
+                self.late_buffer.push(existing.entry);
+                conflict_detected = true;
+            } else {
+                // message can be keept in heap
+                still_safe.push(existing);
+            }
+        }
+
+        if conflict_detected {
+            self.late_buffer.push(d_req.entry);
+        } else {
+            self.early_buffer.push(d_req);
+        }
+
+        for safe_req in still_safe {
+            self.early_buffer.push(safe_req);
+        }
     }
+
 
 
     /// Checks the early_buffer and processes any messages whose deadlines have passed.
     /// This should be called periodically by your tick() function.
-    pub(crate) fn process_early_buffer(&mut self) {
+    pub(crate) fn process_early_buffer(&mut self) -> ProcessEarlyBufferResult<T> {
         let current_time = self.clock.get_time();
+        let mut popped_entries: Vec<T> = Vec::new();
+        let mut entries_to_fast_append: Vec<T> = Vec::new();
+
+        // Snapshot whether this replica is allowed to do leader-side execution
+        // for the entries popped in this call.
+        let leader_exec_epoch = match self.state {
+            (Role::Leader, Phase::Accept) => Some(self.get_promise()),
+            _ => None,
+        };
 
         while let Some(top) = self.early_buffer.peek() {
 
             // we just check if current_time has reached the deadline!
             if top.deadline <= current_time {
                 if let Some(request) = self.early_buffer.pop() {
+                    let popped_entry = request.entry.clone();
 
+                    //ser new laste deadline popped
                     self.last_popped_deadline = request.deadline;
 
-                    match self.state.0 {
-                        Role::Leader => {
-                            // TODO: Implement Leader logic here
-                            println!("Leader: Executing request with deadline {}", request.deadline);
-                        },
-                        Role::Follower => {
-                            // TODO: Implement Follower logic here
-                            println!("Follower: Logging request with deadline {}", request.deadline);
-                        }
-                    }
+                    // append to log
+                    //let _ = self.append(request.entry);
+                    entries_to_fast_append.push(popped_entry.clone());
+
+                    // push enrty into vector
+                    popped_entries.push(popped_entry);
                 }
             } else {
                 // the deadline has not passed yet
                 break;
             }
+            //Append all entries
+
         }
+        if !entries_to_fast_append.is_empty() {
+            self.append_local_only(entries_to_fast_append);
+        }
+        ProcessEarlyBufferResult {
+            popped_entries,
+            leader_exec_epoch,
+        }
+    }
+
+    pub(crate) fn append_local_only(&mut self, entries: Vec<T>) -> StorageResult<usize>{
+        self.internal_storage.append_entries_without_batching(entries)
     }
 
 

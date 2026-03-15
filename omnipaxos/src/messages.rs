@@ -176,10 +176,6 @@ pub mod sequence_paxos {
     {
         /// The original entry/command.
         pub entry: T,
-        /// The local send timestamp attached to the request.
-        pub send_time: i64,
-        /// The computed deadline / DOM value for the request.
-        pub deadline: i64
     }
 
 

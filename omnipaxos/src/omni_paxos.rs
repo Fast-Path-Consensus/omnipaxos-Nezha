@@ -21,6 +21,7 @@ use std::{
     fmt::{Debug, Display},
     ops::RangeBounds,
 };
+use std::process::Command;
 #[cfg(feature = "toml_config")]
 use toml;
 
@@ -413,6 +414,10 @@ where
         self.seq_paxos.append(entry)
     }
 
+    pub fn append_nezha(&mut self, entry: T) {
+        self.seq_paxos.append_nezha(entry)
+    }
+
     /// Propose a cluster reconfiguration. Returns an error if the current configuration has already been stopped
     /// by a previous reconfiguration request or if the `new_configuration` is invalid.
     /// `new_configuration` defines the cluster-wide configuration settings for the **next** cluster.
@@ -454,7 +459,6 @@ where
         if self.flush_batch_clock.tick_and_check_timeout() {
             self.seq_paxos.flush_batch_timeout();
         }
-        self.seq_paxos.process_early_buffer();
 
     }
 
