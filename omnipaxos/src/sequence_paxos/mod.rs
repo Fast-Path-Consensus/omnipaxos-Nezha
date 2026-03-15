@@ -554,7 +554,7 @@ where
         }
 
         if !entries_to_fast_append.is_empty() {
-            self.append_local_only(entries_to_fast_append);
+            let _ = self.append_local_only(entries_to_fast_append).expect("Appending to (fast-path) replica failed!");
         }
 
         ProcessEarlyBufferResult {
