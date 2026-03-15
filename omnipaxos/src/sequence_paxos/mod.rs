@@ -544,7 +544,7 @@ where
     /// Returns the number of microseconds until the next message in the early_buffer expires.
     /// Returns Some(0) if a message is already expired and ready to process.
     /// Returns None if the buffer is empty.
-    pub(crate) fn time_for_next_tick(&self) -> Option<i64> {
+    pub(crate) fn time_until_next_early_buffer_deadline(&self) -> Option<i64> {
         if let Some(top) = self.early_buffer.peek() {
             let current_time = self.clock.get_time();
 
