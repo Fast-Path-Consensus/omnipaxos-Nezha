@@ -67,12 +67,7 @@ where
     B: Storage<T>,
 {
     pub(crate) fn append_nezha(&mut self, entry: T) {
-        let deadline = entry.deadline();
-        let deadlined_request = DeadlinedRequest {
-            entry,
-            deadline,
-        };
-        self.handle_deadlined_request(deadlined_request)
+        self.handle_deadlined_request(entry)
     }
 }
 // the logic for creating the ordering logic for the deadline requests of the binary heap
@@ -352,7 +347,6 @@ where
             PaxosMsg::Compaction(c) => self.handle_compaction(c),
             PaxosMsg::AcceptStopSign(acc_ss) => self.handle_accept_stopsign(acc_ss),
             PaxosMsg::ForwardStopSign(f_ss) => self.handle_forwarded_stopsign(f_ss),
-            PaxosMsg::NezhaMsg(nezha_msg) => self.handle_nezha_msg(nezha_msg),
         }
     }
 
@@ -507,37 +501,28 @@ where
         }
     }
 
-    fn handle_nezha_msg(&mut self, nezha_msg: NezhaMsg<T>) {
-        match nezha_msg {
-            NezhaMsg::DeadlinedRequest(d_request) => {self.handle_deadlined_request(d_request);},
-            //NezhaMsg::FastReply(_) => {}
-            //NezhaMsg::SlowReply(_) => {}
-            //NezhaMsg::LogModification(_) => {}
-        }
-    }
-
     /// Checks whether a deadlined request can enter the early buffer or not.
-    fn handle_deadlined_request(&mut self, d_req: DeadlinedRequest<T>) {
+    fn handle_deadlined_request(&mut self, d_req: T) {
         let uncertainty = self.clock.get_uncertainty();
 
         // 1. should the message be in the late buffer
-        if d_req.deadline <= self.last_popped_deadline + uncertainty {
-            self.late_buffer.push(d_req.entry);
+        if d_req.deadline() <= self.last_popped_deadline + uncertainty {
+            self.late_buffer.push(d_req);
             return;
         }
 
         // 2. drain the buffer to find conlficts
-        let mut current_buffer_contents: Vec<DeadlinedRequest<T>> = self.early_buffer.drain().collect();
+        let mut current_buffer_contents: Vec<T> = self.early_buffer.drain().collect();
         let mut conflict_detected = false;
         let mut still_safe = Vec::new();
 
         for existing in current_buffer_contents {
 
-            let diff = (d_req.deadline - existing.deadline).abs();
+            let diff = (d_req.deadline() - existing.deadline()).abs();
 
             if diff <= uncertainty {
                 // conlfict found
-                self.late_buffer.push(existing.entry);
+                self.late_buffer.push(existing);
                 conflict_detected = true;
             } else {
                 // message can be keept in heap
@@ -546,7 +531,7 @@ where
         }
 
         if conflict_detected {
-            self.late_buffer.push(d_req.entry);
+            self.late_buffer.push(d_req);
         } else {
             self.early_buffer.push(d_req);
         }

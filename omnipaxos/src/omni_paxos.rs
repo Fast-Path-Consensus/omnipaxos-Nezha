@@ -21,7 +21,6 @@ use std::{
     fmt::{Debug, Display},
     ops::RangeBounds,
 };
-use std::process::Command;
 #[cfg(feature = "toml_config")]
 use toml;
 
@@ -414,6 +413,7 @@ where
         self.seq_paxos.append(entry)
     }
 
+    /// Tries to append an entry to the log via fast-path.
     pub fn append_nezha(&mut self, entry: T) {
         self.seq_paxos.append_nezha(entry)
     }
