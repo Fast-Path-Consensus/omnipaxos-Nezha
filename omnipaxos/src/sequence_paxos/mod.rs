@@ -15,7 +15,6 @@ use crate::{
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
 use std::{fmt::Debug, vec};
-use std::collections::BinaryHeap;
 use std::time::Duration;
 use crate::clock::{ClockSimulator, ClockSimError};
 
@@ -54,7 +53,7 @@ where
 
     // nezha implementation
     clock: ClockSimulator,
-    early_buffer: BinaryHeap<DeadlinedRequest<T>>,
+    early_buffer: Vec<T>,
     late_buffer: Vec<T>,
 
     last_popped_deadline: i64,
@@ -66,37 +65,19 @@ where
     T: Entry,
     B: Storage<T>,
 {
-    pub(crate) fn append_nezha(&mut self, entry: T) {
-        self.handle_deadlined_request(entry)
+    pub(crate) fn append_nezha(&mut self, entry: T) -> Result<(), ProposeErr<T>> {
+        if self.accepted_reconfiguration() {
+            return Err(ProposeErr::PendingReconfigEntry(entry));
+        }
+        self.handle_deadlined_request(entry);
+        Ok(())
     }
 }
 // the logic for creating the ordering logic for the deadline requests of the binary heap
 
-use std::cmp::Ordering;
 use crate::storage::StorageResult;
 
-// are two deadlines equal?
-impl<T: Entry> PartialEq for DeadlinedRequest<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.deadline == other.deadline
-    }
-}
-impl<T: Entry> Eq for DeadlinedRequest<T> {}
 
-// are two deadlines less than each other?
-impl<T: Entry> PartialOrd for DeadlinedRequest<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<T: Entry> Ord for DeadlinedRequest<T> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse ordering to make BinaryHeap a min-heap (earliest deadline pops first)
-        other.deadline.cmp(&self.deadline)
-    }
-
-}
 
 
 
@@ -169,7 +150,7 @@ where
                     create_logger(s.as_str())
                 }
             },
-            early_buffer: BinaryHeap::new(),
+            early_buffer: Vec::new(),
             late_buffer: Vec::new(),
             last_popped_deadline: 0,
             clock: ClockSimulator::new(
@@ -501,43 +482,37 @@ where
         }
     }
 
-    /// Checks whether a deadlined request can enter the early buffer or not.
     fn handle_deadlined_request(&mut self, d_req: T) {
         let uncertainty = self.clock.get_uncertainty();
+        let d_time = d_req.deadline();
 
-        // 1. should the message be in the late buffer
-        if d_req.deadline() <= self.last_popped_deadline + uncertainty {
+        // 1. Check if it's too close to what was already popped (Safety Wall)
+        if d_time <= self.last_popped_deadline + uncertainty {
             self.late_buffer.push(d_req);
             return;
         }
 
-        // 2. drain the buffer to find conlficts
-        let mut current_buffer_contents: Vec<T> = self.early_buffer.drain().collect();
-        let mut conflict_detected = false;
-        let mut still_safe = Vec::new();
+        // 2. Linear check for conflicts within the early_buffer
+        let has_conflict = self.early_buffer.iter().any(|buffered_msg| {
+            (d_time - buffered_msg.deadline()).abs() <= uncertainty
+        });
 
-        for existing in current_buffer_contents {
-
-            let diff = (d_req.deadline() - existing.deadline()).abs();
-
-            if diff <= uncertainty {
-                // conlfict found
-                self.late_buffer.push(existing);
-                conflict_detected = true;
-            } else {
-                // message can be keept in heap
-                still_safe.push(existing);
+        if has_conflict {
+            // Move all conflicting entries to late_buffer
+            let mut i = 0;
+            while i < self.early_buffer.len() {
+                if (d_time - self.early_buffer[i].deadline()).abs() <= uncertainty {
+                    let removed = self.early_buffer.remove(i);
+                    self.late_buffer.push(removed);
+                } else {
+                    i += 1;
+                }
             }
-        }
-
-        if conflict_detected {
             self.late_buffer.push(d_req);
         } else {
+            // 3. No conflict: Push and sort
             self.early_buffer.push(d_req);
-        }
-
-        for safe_req in still_safe {
-            self.early_buffer.push(safe_req);
+            self.early_buffer.sort_by(|a, b| a.deadline().cmp(&b.deadline()));
         }
     }
 
@@ -547,43 +522,41 @@ where
     /// This should be called periodically by your tick() function.
     pub(crate) fn process_early_buffer(&mut self) -> ProcessEarlyBufferResult<T> {
         let current_time = self.clock.get_time();
-        let mut popped_entries: Vec<T> = Vec::new();
-        let mut entries_to_fast_append: Vec<T> = Vec::new();
+        let uncertainty = self.clock.get_uncertainty();
+        let mut popped_entries: Vec<T> = Vec::new(); // send to kv
+        let mut entries_to_fast_append: Vec<T> = Vec::new(); // append to log
 
-        // Snapshot whether this replica is allowed to do leader-side execution
-        // for the entries popped in this call.
         let leader_exec_epoch = match self.state {
             (Role::Leader, Phase::Accept) => Some(self.get_promise()),
             _ => None,
         };
 
-        while let Some(top) = self.early_buffer.peek() {
+        // Use while loop to check the front of the Vec
+        while !self.early_buffer.is_empty() {
+            // Access the first element (the one with the earliest deadline)
+            let first_deadline = self.early_buffer[0].deadline();
 
-            // we just check if current_time has reached the deadline!
-            if top.deadline <= current_time {
-                if let Some(request) = self.early_buffer.pop() {
-                    let popped_entry = request.entry.clone();
+            // Release Rule: Only process if current_time >= deadline + uncertainty
+            if first_deadline + uncertainty <= current_time {
+                // Remove the element from the front (index 0)
+                let popped_entry = self.early_buffer.remove(0);
 
-                    //ser new laste deadline popped
-                    self.last_popped_deadline = request.deadline;
+                // Update the last popped deadline safety wall
+                self.last_popped_deadline = popped_entry.deadline();
 
-                    // append to log
-                    //let _ = self.append(request.entry);
-                    entries_to_fast_append.push(popped_entry.clone());
-
-                    // push enrty into vector
-                    popped_entries.push(popped_entry);
-                }
+                // Prepare for log append and return
+                entries_to_fast_append.push(popped_entry.clone());
+                popped_entries.push(popped_entry);
             } else {
-                // the deadline has not passed yet
+                // The earliest deadline is still within its uncertainty window
                 break;
             }
-            //Append all entries
-
         }
+
         if !entries_to_fast_append.is_empty() {
             self.append_local_only(entries_to_fast_append);
         }
+
         ProcessEarlyBufferResult {
             popped_entries,
             leader_exec_epoch,
@@ -600,12 +573,12 @@ where
     /// Returns Some(0) if a message is already expired and ready to process.
     /// Returns None if the buffer is empty.
     pub(crate) fn time_until_next_early_buffer_deadline(&self) -> Option<i64> {
-        if let Some(top) = self.early_buffer.peek() {
+        if let Some(top) = self.early_buffer.first() {
             let current_time = self.clock.get_time();
 
-            if top.deadline > current_time {
+            if top.deadline() > current_time {
                 // Future deadline: Calculate how long to wait (+ uncertainty for safety)
-                let wait_time = (top.deadline - current_time);
+                let wait_time = top.deadline() - current_time;
                 Some(wait_time)
             } else {
                 // The deadline has already passed! We should wake up immediately (0 wait time)
