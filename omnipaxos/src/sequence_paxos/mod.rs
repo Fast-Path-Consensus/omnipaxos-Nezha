@@ -15,6 +15,7 @@ use crate::{
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
 use std::{fmt::Debug, vec};
+use std::collections::BinaryHeap;
 use std::time::Duration;
 use crate::clock::{ClockSimulator, ClockSimError};
 
@@ -43,8 +44,46 @@ where
     cached_promise_message: Option<Promise<T>>,
     #[cfg(feature = "logging")]
     logger: Logger,
+
+    // nezha implementation
     clock: ClockSimulator,
+    early_buffer: BinaryHeap<DeadlinedRequest<T>>,
+    late_buffer: Vec<T>,
+
+    last_popped_deadline: i64,
+
 }
+
+// the logic for creating the ordering logic for the deadline requests of the binary heap
+
+use std::cmp::Ordering;
+// are two deadlines equal?
+impl<T: Entry> PartialEq for DeadlinedRequest<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.deadline == other.deadline
+    }
+}
+impl<T: Entry> Eq for DeadlinedRequest<T> {}
+
+// are two deadlines less than each other?
+impl<T: Entry> PartialOrd for DeadlinedRequest<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: Entry> Ord for DeadlinedRequest<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse ordering to make BinaryHeap a min-heap (earliest deadline pops first)
+        other.deadline.cmp(&self.deadline)
+    }
+
+}
+
+
+
+
+
 
 impl<T, B> SequencePaxos<T, B>
 where
@@ -87,6 +126,7 @@ where
             internal_storage: InternalStorage::with(
                 storage,
                 internal_storage_config,
+
                 #[cfg(feature = "unicache")]
                 pid,
             ),
@@ -111,6 +151,9 @@ where
                     create_logger(s.as_str())
                 }
             },
+            early_buffer: BinaryHeap::new(),
+            late_buffer: Vec::new(),
+            last_popped_deadline: 0,
             clock: ClockSimulator::new(
                 config.clock_drift_us_per_s, // Values based on profile in OmniPaxos_rs.
                 config.clock_uncertainty_us,
@@ -450,14 +493,78 @@ where
 
     }
 
-    // Checks whether a deadlined request can enter the early buffer or not.
+    /// Checks whether a deadlined request can enter the early buffer or not.
     fn handle_deadlined_request(&mut self, d_req: DeadlinedRequest<T>) {
         println!("Inside handle deadline");
-        //Am i a follower or a leader?
-        //If i am a follower, then i call upon the
 
+        if d_req.deadline > self.last_popped_deadline {
+            // SUCCESS: Den är större! In i min-heapen.
+            self.early_buffer.push(d_req);
+
+        } else {
+            self.late_buffer.push(d_req.entry);
+        }
 
     }
+
+
+    /// Checks the early_buffer and processes any messages whose deadlines have passed.
+    /// This should be called periodically by your tick() function.
+    pub(crate) fn process_early_buffer(&mut self) {
+        let current_time = self.clock.get_time();
+
+        while let Some(top) = self.early_buffer.peek() {
+
+            // we just check if current_time has reached the deadline!
+            if top.deadline <= current_time {
+                if let Some(request) = self.early_buffer.pop() {
+
+                    self.last_popped_deadline = request.deadline;
+
+                    match self.state.0 {
+                        Role::Leader => {
+                            // TODO: Implement Leader logic here
+                            println!("Leader: Executing request with deadline {}", request.deadline);
+                        },
+                        Role::Follower => {
+                            // TODO: Implement Follower logic here
+                            println!("Follower: Logging request with deadline {}", request.deadline);
+                        }
+                    }
+                }
+            } else {
+                // the deadline has not passed yet
+                break;
+            }
+        }
+    }
+
+
+
+    /// Returns the number of microseconds until the next message in the early_buffer expires.
+    /// Returns Some(0) if a message is already expired and ready to process.
+    /// Returns None if the buffer is empty.
+    pub(crate) fn time_until_next_early_buffer_deadline(&self) -> Option<i64> {
+        if let Some(top) = self.early_buffer.peek() {
+            let current_time = self.clock.get_time();
+
+            if top.deadline > current_time {
+                // Future deadline: Calculate how long to wait (+ uncertainty for safety)
+                let wait_time = (top.deadline - current_time);
+                Some(wait_time)
+            } else {
+                // The deadline has already passed! We should wake up immediately (0 wait time)
+                Some(0)
+            }
+        } else {
+            None
+        }
+    }
+
+
+
+
+
 }
 
 
