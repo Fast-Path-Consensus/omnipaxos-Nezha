@@ -23,6 +23,7 @@ use std::{
 };
 #[cfg(feature = "toml_config")]
 use toml;
+use crate::sequence_paxos::ProcessEarlyBufferResult;
 
 /// Configuration for `OmniPaxos`.
 /// # Fields
@@ -397,8 +398,8 @@ where
 
     /// Checks the early_buffer and processes any messages whose deadlines have passed.
     /// This should be called periodically by your tick() function.
-    pub fn process_early_buffer(&mut self) {
-        self.seq_paxos.process_early_buffer();
+    pub fn process_early_buffer(&mut self) -> ProcessEarlyBufferResult<T> {
+        self.seq_paxos.process_early_buffer()
     }
 
     /// Returns the number of microseconds until the next message in the early_buffer expires.
