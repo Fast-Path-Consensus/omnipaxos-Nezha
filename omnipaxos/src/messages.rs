@@ -176,6 +176,8 @@ pub mod sequence_paxos {
     {
         /// The original entry/command.
         pub entry: T,
+        /// The deadline for this request in microseconds.
+        pub deadline: i64,
     }
 
 

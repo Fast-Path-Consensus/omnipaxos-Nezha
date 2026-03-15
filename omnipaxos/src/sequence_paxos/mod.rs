@@ -67,8 +67,10 @@ where
     B: Storage<T>,
 {
     pub(crate) fn append_nezha(&mut self, entry: T) {
+        let deadline = entry.deadline();
         let deadlined_request = DeadlinedRequest {
             entry,
+            deadline,
         };
         self.handle_deadlined_request(deadlined_request)
     }
@@ -519,7 +521,7 @@ where
         let uncertainty = self.clock.get_uncertainty();
 
         // 1. should the message be in the late buffer
-        if d_req.entry.deadline <= self.last_popped_deadline + uncertainty {
+        if d_req.deadline <= self.last_popped_deadline + uncertainty {
             self.late_buffer.push(d_req.entry);
             return;
         }

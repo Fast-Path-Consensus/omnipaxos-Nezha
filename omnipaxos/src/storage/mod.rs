@@ -43,6 +43,12 @@ pub trait Entry: Clone + Debug {
     #[cfg(all(feature = "unicache", feature = "serde"))]
     /// The unicache type for caching popular/re-occurring fields of an entry.
     type UniCache: UniCache<T = Self> + Serialize + for<'a> Deserialize<'a>;
+
+    /// Returns the deadline for this entry in microseconds.
+    /// Returns `i64::MAX` by default (no deadline).
+    fn deadline(&self) -> i64 {
+        i64::MAX
+    }
 }
 
 /// A StopSign entry that marks the end of a configuration. Used for reconfiguration.
