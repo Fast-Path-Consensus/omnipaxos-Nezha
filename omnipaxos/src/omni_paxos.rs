@@ -395,6 +395,19 @@ where
         self.seq_paxos.is_reconfigured()
     }
 
+    /// Checks the early_buffer and processes any messages whose deadlines have passed.
+    /// This should be called periodically by your tick() function.
+    pub fn process_early_buffer(&mut self) {
+        self.seq_paxos.process_early_buffer();
+    }
+
+    /// Returns the number of microseconds until the next message in the early_buffer expires.
+    /// Returns Some(0) if a message is already expired and ready to process.
+    /// Returns None if the buffer is empty.
+    pub fn time_until_next_early_buffer_deadline(&mut self) -> Option<i64> {
+        self.seq_paxos.time_until_next_early_buffer_deadline()
+    }
+
     /// Append an entry to the replicated log.
     pub fn append(&mut self, entry: T) -> Result<(), ProposeErr<T>> {
         self.seq_paxos.append(entry)
