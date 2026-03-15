@@ -23,7 +23,15 @@ use std::{
 };
 #[cfg(feature = "toml_config")]
 use toml;
-use crate::sequence_paxos::ProcessEarlyBufferResult;
+
+/// Result returned by `process_early_buffer()`.
+#[derive(Debug)]
+pub struct EarlyBufferResult<T> {
+    /// Entries popped from the early buffer in this processing round.
+    pub popped_entries: Vec<T>,
+    /// The leader ballot at processing time when this node is in `(Leader, Accept)`.
+    pub leader_exec_epoch: Option<Ballot>,
+}
 
 /// Configuration for `OmniPaxos`.
 /// # Fields
@@ -398,8 +406,12 @@ where
 
     /// Checks the early_buffer and processes any messages whose deadlines have passed.
     /// This should be called periodically by your tick() function.
-    pub fn process_early_buffer(&mut self) -> ProcessEarlyBufferResult<T> {
-        self.seq_paxos.process_early_buffer()
+    pub fn process_early_buffer(&mut self) -> EarlyBufferResult<T> {
+        let internal_result = self.seq_paxos.process_early_buffer();
+        EarlyBufferResult {
+            popped_entries: internal_result.popped_entries,
+            leader_exec_epoch: internal_result.leader_exec_epoch,
+        }
     }
 
     /// Returns the number of microseconds until the next message in the early_buffer expires.
