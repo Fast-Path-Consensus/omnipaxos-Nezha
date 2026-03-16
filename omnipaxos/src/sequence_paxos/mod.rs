@@ -657,7 +657,7 @@ where
                 None
             }
                 else {
-                Some(self.finalize_follower_release(&entry, log_id))
+                Some(self.finalize_follower_release(&entry))
             };
 
             released_entries.push(ReleasedEntry {
@@ -670,83 +670,6 @@ where
         ProcessEarlyBufferResult {
             released_entries,
             leader_exec_epoch,
-        }
-    }
-
-    /// Checks the early_buffer and processes any messages whose deadlines have passed.
-    /// This should be called periodically by your tick() function.
-    #[cfg(not(feature = "serde"))]
-    pub(crate) fn process_early_buffer(&mut self) -> ProcessEarlyBufferResult<T> {
-        let current_time = self.clock.get_time();
-        let uncertainty = self.clock.get_uncertainty();
-        let mut entries_to_fast_append: Vec<T> = Vec::new(); // append to log
-        let mut released_entries : Vec<ReleasedEntry<T>> = Vec::new();
-
-        let leader_exec_epoch = match self.state {
-            (Role::Leader, Phase::Accept) => Some(self.get_promise()),
-            _ => None,
-        };
-
-        // Use while loop to check the front of the Vec
-        while !self.early_buffer.is_empty() {
-            // Access the first element (the one with the earliest deadline)
-            let first_deadline = self.early_buffer[0].deadline();
-
-            // Release Rule: Only process if current_time >= deadline + uncertainty
-            if first_deadline + uncertainty <= current_time {
-                // Remove the element from the front (index 0)
-                let popped_entry = self.early_buffer.remove(0);
-
-                // Update the last popped deadline safety wall
-                self.last_popped_deadline = popped_entry.deadline();
-
-                // Prepare for log append and return
-                entries_to_fast_append.push(popped_entry.clone());
-
-            } else {
-                // The earliest deadline is still within its uncertainty window
-                break;
-            }
-        }
-
-        // Nothing to do
-        if entries_to_fast_append.is_empty() {
-            return ProcessEarlyBufferResult {
-                released_entries,
-                leader_exec_epoch,
-            };
-        }
-        let num_entries_to_fast_append = entries_to_fast_append.len();
-
-        let last_log_id_in_full_log = self
-            .append_local_only(entries_to_fast_append.clone())
-            .expect("Appending to fast-path replica failed!");
-
-        let first_log_id_from_fast_append = last_log_id_in_full_log - num_entries_to_fast_append + 1;
-
-        // Build a ReleaseEntry for every appended element.
-        for (offset, entry) in entries_to_fast_append.into_iter().enumerate() {
-            let log_id = first_log_id_from_fast_append + offset; // Offset initially 0
-
-            let hash =
-                if leader_exec_epoch.is_some() { // Cannot calculate hash of Leader's entry yet as it requires synced_log.
-                None
-            }
-                else {
-                Some(self.finalize_follower_release(&entry, log_id))
-            };
-
-            released_entries.push(ReleasedEntry {
-                entry,
-                log_id,
-                hash,
-            });
-        }
-
-        ProcessEarlyBufferResult {
-            released_entries,
-            leader_exec_epoch,
-            // include hash
         }
     }
 
@@ -762,13 +685,6 @@ where
         let synced_bytes = bincode::serialize(&self.nezha.synced_log)
             .expect("Failed to serialize synced_log for hashing");
         self.nezha.hash_synced_log(&synced_bytes);
-        self.nezha.synced_hash
-    }
-
-    #[cfg(not(feature = "serde"))]
-    pub(crate) fn hash_synced_log(&mut self) -> FastHash {
-        let synced_bytes = format!("{:?}", &self.nezha.synced_log);
-        self.nezha.hash_synced_log(synced_bytes.as_bytes());
         self.nezha.synced_hash
     }
 
@@ -811,19 +727,10 @@ where
 
     /// Returns a hash of type FastHash for the follower as part of what will become its fast-reply.
     #[cfg(feature = "serde")]
-    fn finalize_follower_release(&mut self, entry: &T, log_id: usize) -> FastHash
+    fn finalize_follower_release(&mut self, entry: &T) -> FastHash
     where
         T: serde::Serialize,
     {
-        self.nezha.unsynced_log.push(UnsyncedLogEntry {
-            request: entry.clone(),
-        });
-        self.compute_follower_log_hash()
-    }
-
-    /// Returns a hash of type FastHash for the follower as part of what will become its fast-reply.
-    #[cfg(not(feature = "serde"))]
-    fn finalize_follower_release(&mut self, entry: &T, log_id: usize) -> FastHash {
         self.nezha.unsynced_log.push(UnsyncedLogEntry {
             request: entry.clone(),
         });
@@ -842,18 +749,6 @@ where
 
         self.nezha.hash_synced_log(&synced_bytes);
         self.nezha.hash_unsynced_log(&unsynced_bytes);
-
-        let mut reply_hash = self.nezha.synced_hash;
-        xor_hash(&mut reply_hash, &self.nezha.unsynced_hash);
-        reply_hash
-    }
-
-    #[cfg(not(feature = "serde"))]
-    fn compute_follower_log_hash(&mut self) -> FastHash {
-        let synced_bytes = format!("{:?}", &self.nezha.synced_log);
-        self.nezha.hash_synced_log(synced_bytes.as_bytes());
-        let unsynced_bytes = format!("{:?}", &self.nezha.unsynced_log);
-        self.nezha.hash_unsynced_log(unsynced_bytes.as_bytes());
 
         let mut reply_hash = self.nezha.synced_hash;
         xor_hash(&mut reply_hash, &self.nezha.unsynced_hash);

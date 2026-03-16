@@ -302,11 +302,6 @@ where
         self.seq_paxos.hash_synced_log()
     }
 
-    /// Recomputes and returns the current hash of the follower's synced Nezha log.
-    #[cfg(not(feature = "serde"))]
-    pub fn hash_synced_log(&mut self) -> FastHash {
-        self.seq_paxos.hash_synced_log()
-    }
 }
 
 impl<T, B> OmniPaxos<T, B>
@@ -420,7 +415,8 @@ where
     #[cfg(feature = "serde")]
     pub fn process_early_buffer(&mut self) -> ProcessEarlyBufferResult<T>
     where
-        T: serde::Serialize,{
+        T: serde::Serialize,
+    {
         let internal = self.seq_paxos.process_early_buffer();
         ProcessEarlyBufferResult {
             released_entries: internal.released_entries.into_iter().map(|r| ReleasedEntry {
