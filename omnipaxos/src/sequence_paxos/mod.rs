@@ -691,10 +691,6 @@ where
                 self.early_buffer.push(entry);
                 moved_any = true;
 
-            } else {
-                // 5. If the entry is not found, it's a late request that was already processed
-                //    (e.g. it was already in the early_buffer)
-                //    We can safely ignore it.
             }
         }
         // 5. CRITICAL PERFORMANCE FIX: Sort only once after the whole batch is processed
