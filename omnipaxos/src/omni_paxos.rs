@@ -27,6 +27,10 @@ use toml;
 
 /// Represents the hash (in SHA1) of a given log entry
 pub type FastHash = [u8; 20];
+/// Represents the Command ID
+pub type CommandId = usize;
+/// Represents the Client ID
+pub type ClientId = u64;
 
 /// Represents the released entry from the early buffer together with the index of its entry, and hash.
 #[derive(Debug)]
@@ -464,6 +468,21 @@ where
     /// Returns a list of 3-tuples (client_id, request_id, new_deadline) to be broadcast.
     pub fn process_late_buffer(&mut self) -> Vec<(u64, usize, i64)> {
         self.seq_paxos.process_late_buffer()
+    }
+
+    /// Modifies followers' log to be synced with the leader's log.s
+    pub fn handle_log_modification(
+        &mut self,
+        epoch: Ballot,
+        client_id: ClientId,
+        command_id: CommandId,
+        deadline: i64,
+        log_id: usize,
+        proxy_id: NodeId,
+    )
+    {
+        self.seq_paxos.handle_log_modification(epoch, client_id, command_id, deadline, log_id, proxy_id)
+
     }
 
 

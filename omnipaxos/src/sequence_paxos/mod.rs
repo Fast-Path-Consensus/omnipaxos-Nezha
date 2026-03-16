@@ -1,4 +1,4 @@
-use super::{ballot_leader_election::Ballot, messages::sequence_paxos::*, util::LeaderState};
+use super::{ballot_leader_election::Ballot, messages::sequence_paxos::*, util::LeaderState, ClientId, CommandId};
 #[cfg(feature = "logging")]
 use crate::utils::logger::create_logger;
 use crate::{
@@ -234,6 +234,11 @@ where
             }
         }
         paxos
+    }
+
+    pub(crate) fn handle_log_modification(&self, epoch: Ballot, client_id: ClientId, command_id: CommandId, deadline: i64, log_id: usize, proxy_id: NodeId)
+    {
+
     }
 
     pub(crate) fn get_state(&self) -> &(Role, Phase) {
