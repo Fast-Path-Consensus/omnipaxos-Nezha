@@ -53,6 +53,8 @@ pub struct ProcessEarlyBufferResult<T> {
     pub released_entries: Vec<ReleasedEntry<T>>,
     /// The leader ballot at processing time when this node is in `(Leader, Accept)`.
     pub leader_exec_epoch: Option<Ballot>,
+    /// The ballot number
+    pub reply_epoch: Ballot,
 }
 
 /// Configuration for `OmniPaxos`.
@@ -437,6 +439,7 @@ where
                 hash: r.hash,
             }).collect(),
             leader_exec_epoch: internal.leader_exec_epoch,
+            reply_epoch: internal.reply_epoch,
         }
     }
 

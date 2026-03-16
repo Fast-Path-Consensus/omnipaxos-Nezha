@@ -87,6 +87,7 @@ pub(crate) struct ReleasedEntry<T> {
 pub(crate) struct ProcessEarlyBufferResult<T> {
     pub released_entries: Vec<ReleasedEntry<T>>,
     pub leader_exec_epoch: Option<Ballot>,
+    pub reply_epoch: Ballot,
 }
 
 /// a Sequence Paxos replica. Maintains local state of the replicated log, handles incoming messages and produces outgoing messages that the user has to fetch periodically and send using a network implementation.
@@ -613,10 +614,12 @@ where
         let mut entries_to_fast_append: Vec<T> = Vec::new(); // append to log
         let mut released_entries : Vec<ReleasedEntry<T>> = Vec::new();
 
+        let promise = self.get_promise();
         let leader_exec_epoch = match self.state {
-            (Role::Leader, Phase::Accept) => Some(self.get_promise()),
+            (Role::Leader, Phase::Accept) => Some(promise),
             _ => None,
         };
+        let reply_epoch = promise;
 
         // Use while loop to check the front of the Vec
         while !self.early_buffer.is_empty() {
@@ -645,6 +648,7 @@ where
             return ProcessEarlyBufferResult {
                 released_entries,
                 leader_exec_epoch,
+                reply_epoch,
             };
         }
         let num_entries_to_fast_append = entries_to_fast_append.len();
@@ -677,6 +681,7 @@ where
         ProcessEarlyBufferResult {
             released_entries,
             leader_exec_epoch,
+            reply_epoch,
         }
     }
 
