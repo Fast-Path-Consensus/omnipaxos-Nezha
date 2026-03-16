@@ -482,7 +482,7 @@ where
         let d_time = d_req.deadline();
 
         // 1. Check if it's too close to what was already popped (Safety Wall)
-        if d_time <= self.last_popped_deadline + uncertainty {
+        if d_time <= self.last_popped_deadline  {
             self.late_buffer.push(d_req);
             return;
         }
@@ -510,6 +510,31 @@ where
             self.early_buffer.sort_by(|a, b| a.deadline().cmp(&b.deadline()));
         }
     }
+
+
+
+    pub(crate) fn process_late_buffer(&mut self) -> Vec<(u64, usize, i64)> {
+        let mut sync_info = Vec::new();
+        let current_time = self.clock.get_time();
+
+        let late_entries: Vec<T> = self.late_buffer.drain(..).collect();
+        for mut entry in late_entries {
+            // 1. Create the new deadline
+            let new_ddl = std::cmp::max(current_time, self.last_popped_deadline + 1);
+
+            // 2. Extract info for the triple (The "Necessary Stuff")
+            sync_info.push((entry.client_id(), entry.id(), new_ddl));
+
+            // 3. Update the entry itself so the Leader's EB handles it correctly
+            entry.set_deadline(new_ddl);
+            self.early_buffer.push(entry);
+        }
+
+        self.early_buffer.sort_by(|a, b| a.deadline().cmp(&b.deadline()));
+        sync_info
+    }
+
+
 
 
 
