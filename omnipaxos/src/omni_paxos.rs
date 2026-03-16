@@ -53,6 +53,8 @@ pub struct ProcessEarlyBufferResult<T> {
     pub released_entries: Vec<ReleasedEntry<T>>,
     /// The leader ballot at processing time when this node is in `(Leader, Accept)`.
     pub leader_exec_epoch: Option<Ballot>,
+    /// The ballot number
+    pub reply_epoch: Ballot,
 }
 
 /// Configuration for `OmniPaxos`.
@@ -302,6 +304,18 @@ where
         self.seq_paxos.hash_synced_log()
     }
 
+    /// Appends an entry together with its result to the synced_log.
+    pub fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<Option<String>>) {
+        self.seq_paxos.append_synced_log(
+            crate::sequence_paxos::ReleasedEntry {
+                entry: entry.entry,
+                log_id: entry.log_id,
+                hash: entry.hash,
+            },
+            result,
+        );
+    }
+
 }
 
 impl<T, B> OmniPaxos<T, B>
@@ -425,6 +439,7 @@ where
                 hash: r.hash,
             }).collect(),
             leader_exec_epoch: internal.leader_exec_epoch,
+            reply_epoch: internal.reply_epoch,
         }
     }
 
