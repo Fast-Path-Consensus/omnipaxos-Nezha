@@ -418,6 +418,13 @@ where
         self.seq_paxos.append_nezha(entry)
     }
 
+    /// Nezha Slow Path: Leader re-sequences late requests.
+    /// Returns a list of 3-tuples (client_id, request_id, new_deadline) to be broadcast.
+    pub fn process_late_buffer(&mut self) -> Vec<(u64, usize, i64)> {
+        self.seq_paxos.process_late_buffer()
+    }
+
+
     /// Propose a cluster reconfiguration. Returns an error if the current configuration has already been stopped
     /// by a previous reconfiguration request or if the `new_configuration` is invalid.
     /// `new_configuration` defines the cluster-wide configuration settings for the **next** cluster.
