@@ -49,6 +49,24 @@ pub trait Entry: Clone + Debug {
     fn deadline(&self) -> i64 {
         i64::MAX
     }
+
+    /// Returns the client id for this entry.
+    /// Returns `0` by default.
+    fn client_id(&self) -> u64 {
+        0
+    }
+
+    /// Returns the coordinator (server) id for this entry.
+    /// Returns `0` by default.
+    fn coordinator_id(&self) -> u64 {
+        0
+    }
+
+    /// Returns the command id for this entry.
+    /// Returns `0` by default.
+    fn id(&self) -> usize {
+        0
+    }
 }
 
 /// A StopSign entry that marks the end of a configuration. Used for reconfiguration.
