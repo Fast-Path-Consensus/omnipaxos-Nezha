@@ -451,6 +451,11 @@ where
         self.seq_paxos.process_late_buffer()
     }
 
+    /// Nezha Slow Path: Follower applies a batch of resequencing decisions from the leader.
+    pub fn resequence_batch(&mut self, batch: Vec<(u64, usize, i64)>) {
+        self.seq_paxos.resequence_batch(batch);
+    }
+
 
     /// Propose a cluster reconfiguration. Returns an error if the current configuration has already been stopped
     /// by a previous reconfiguration request or if the `new_configuration` is invalid.
