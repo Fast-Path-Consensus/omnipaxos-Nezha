@@ -818,7 +818,6 @@ where
         self.nezha.unsynced_log.push(UnsyncedLogEntry {
             request: entry.clone(),
         });
-
         self.compute_follower_log_hash()
     }
 
@@ -827,7 +826,6 @@ where
     fn finalize_follower_release(&mut self, entry: &T, log_id: usize) -> FastHash {
         self.nezha.unsynced_log.push(UnsyncedLogEntry {
             request: entry.clone(),
-            log_id,
         });
         self.compute_follower_log_hash()
     }
