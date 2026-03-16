@@ -460,10 +460,14 @@ where
         self.seq_paxos.append_nezha(entry)
     }
 
-    /// Nezha Slow Path: Leader re-sequences late requests.
-    /// Returns a list of 3-tuples (client_id, request_id, new_deadline) to be broadcast.
-    pub fn process_late_buffer(&mut self) -> Vec<(u64, usize, i64)> {
-        self.seq_paxos.process_late_buffer()
+    /// Nezha Slow Path: Leader re-sequences late requests
+    pub fn process_late_buffer(&mut self) -> Vec<ReleasedEntry<T>> {
+        let internal_entries = self.seq_paxos.process_late_buffer();
+        internal_entries.into_iter().map(|r| ReleasedEntry {
+            entry: r.entry,
+            log_id: r.log_id,
+            hash: r.hash,
+        }).collect()
     }
 
 
