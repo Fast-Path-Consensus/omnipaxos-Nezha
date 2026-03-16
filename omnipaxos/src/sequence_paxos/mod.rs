@@ -57,6 +57,13 @@ impl<T> NezhaState<T> {
         let synced_result = hasher.finalize();
         self.synced_hash.copy_from_slice(&synced_result);
     }
+
+    fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<String>) {
+        self.synced_log.push(SyncedLogEntry {
+            request: entry.entry,
+            result: Some(result),
+        });
+    }
 }
 
 #[derive(Debug, Clone)]
