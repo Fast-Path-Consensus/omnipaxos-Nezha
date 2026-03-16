@@ -581,7 +581,6 @@ where
 
 
     /// Nezha Slow Path: Leader re-sequences late requests.
-    /// Returns a list of 3-tuples (client_id, request_id, new_deadline) to be broadcast.
     pub(crate) fn process_late_buffer(&mut self) -> Vec<ReleasedEntry<T>> {
         let mut released_info = Vec::new();
         let current_time = self.clock.get_time();
@@ -602,9 +601,6 @@ where
 
             self.early_buffer.push(entry);
 
-            // 3. Increment for the next entry to guarantee strictly increasing
-            // physical time within this batch, leaving self.last_popped_deadline alone!
-            next_ddl += 1;
         }
 
         // 4. Sort by deadline, using the paper's mandatory tie-breaker (Client ID + Request ID)
@@ -703,9 +699,7 @@ where
         }
     }
 
-
     
-
     pub(crate) fn append_local_only(&mut self, entries: Vec<T>) -> StorageResult<usize>{
         self.internal_storage.append_entries_without_batching(entries)
     }
