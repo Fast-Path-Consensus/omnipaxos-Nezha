@@ -302,6 +302,18 @@ where
         self.seq_paxos.hash_synced_log()
     }
 
+    /// Appends an entry together with its result to the synced_log.
+    pub fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<String>) {
+        self.seq_paxos.append_synced_log(
+            crate::sequence_paxos::ReleasedEntry {
+                entry: entry.entry,
+                log_id: entry.log_id,
+                hash: entry.hash,
+            },
+            result,
+        );
+    }
+
 }
 
 impl<T, B> OmniPaxos<T, B>

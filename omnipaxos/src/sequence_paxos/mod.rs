@@ -695,6 +695,10 @@ where
         self.nezha.synced_hash
     }
 
+    pub(crate) fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<String>) {
+        self.nezha.append_synced_log(entry, result)
+    }
+
     /// Returns the current simulated time from the shared clock, in microseconds since UNIX_EPOCH.
     pub(crate) fn get_time(&self) -> i64 {
         self.clock.get_time()
