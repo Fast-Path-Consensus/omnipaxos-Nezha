@@ -236,11 +236,6 @@ where
         paxos
     }
 
-    pub(crate) fn handle_log_modification(&self, epoch: Ballot, client_id: ClientId, command_id: CommandId, deadline: i64, log_id: usize, proxy_id: NodeId)
-    {
-
-    }
-
     pub(crate) fn get_state(&self) -> &(Role, Phase) {
         &self.state
     }
@@ -585,22 +580,113 @@ where
     pub(crate) fn process_late_buffer(&mut self) -> Vec<(u64, usize, i64)> {
         let mut sync_info = Vec::new();
         let current_time = self.clock.get_time();
+        // Running base so each entry gets a strictly-increasing new deadline.
+        let mut last_assigned = self.last_popped_deadline;
 
         let late_entries: Vec<T> = self.late_buffer.drain(..).collect();
         for mut entry in late_entries {
-            // 1. Create the new deadline
-            let new_ddl = std::cmp::max(current_time, self.last_popped_deadline + 1);
+            let new_ddl = std::cmp::max(current_time, last_assigned + 1);
+            last_assigned = new_ddl;
 
-            // 2. Extract info for the triple (The "Necessary Stuff")
             sync_info.push((entry.client_id(), entry.id(), new_ddl));
 
-            // 3. Update the entry itself so the Leader's EB handles it correctly
             entry.set_deadline(new_ddl);
             self.early_buffer.push(entry);
         }
 
         self.early_buffer.sort_by(|a, b| a.deadline().cmp(&b.deadline()));
         sync_info
+    }
+
+    /// Slow path: follower receives a log-modification triple from the leader.
+    #[cfg(feature = "serde")]
+    pub(crate) fn handle_log_modification(
+        &mut self,
+        client_id: u64,
+        command_id: usize,
+        new_deadline: i64,
+        leader_log_id: usize,
+    ) -> Option<usize>
+    where
+        T: serde::Serialize,
+    {
+        let accepted_idx = self.internal_storage.get_accepted_idx();
+        let compacted_idx = self.internal_storage.get_compacted_idx();
+
+        // Case 0: entry was compacted away — it was committed and is already synced.
+        if leader_log_id <= compacted_idx {
+            return Some(leader_log_id);
+        }
+
+        // Case 1 / Case 3: read the paxos log at the leader-assigned position.
+        if leader_log_id <= accepted_idx {
+            if let Ok(entries) = self.internal_storage.get_entries(leader_log_id - 1, leader_log_id) {
+                if let Some(existing) = entries.into_iter().next() {
+                    if existing.client_id() == client_id && existing.id() == command_id {
+                        // Case 1: correct entry already in place — confirm sync.
+                        // Update the deadline in Nezha state to match the leader.
+                        self.promote_unsynced_to_synced(client_id, command_id, new_deadline);
+                        return Some(leader_log_id);
+                    } else {
+                        // Case 3: wrong entry at this paxos slot — log has diverged.
+                        return None;
+                    }
+                }
+            }
+        }
+
+        // Case 2: entry not yet in paxos log at leader_log_id.
+        // Only safe to append if the follower's log ends exactly at leader_log_id - 1
+        // (no gap). A gap means earlier entries are missing — suppress until AcceptSync.
+        if accepted_idx + 1 != leader_log_id {
+            return None;
+        }
+
+        let entry_pos_lb = self.late_buffer.iter().position(|e| {
+            e.client_id() == client_id && e.id() == command_id
+        });
+
+        let entry = if let Some(pos) = entry_pos_lb {
+            let mut e = self.late_buffer.remove(pos);
+            e.set_deadline(new_deadline);
+            e
+        } else if let Some(pos) = self.early_buffer.iter().position(|e| {
+            e.client_id() == client_id && e.id() == command_id
+        }) {
+            let mut e = self.early_buffer.remove(pos);
+            e.set_deadline(new_deadline);
+            e
+        } else {
+            return None; // genuinely lost — proxy will not receive SlowReply
+        };
+
+        let log_id = self
+            .append_local_only(vec![entry.clone()])
+            .expect("Slow path append failed");
+
+        // Leader-confirmed entry goes directly to synced_log (not unsynced_log).
+        self.nezha.synced_log.push(SyncedLogEntry {
+            request: entry,
+            result: None, // followers never execute
+        });
+
+        Some(log_id)
+    }
+
+    /// Moves the entry identified by (client_id, command_id) from `unsynced_log`
+    /// to `synced_log`, updating its deadline to the leader-assigned value.
+    fn promote_unsynced_to_synced(&mut self, client_id: u64, command_id: usize, new_deadline: i64) {
+        if let Some(pos) = self.nezha.unsynced_log.iter().position(|e| {
+            e.request.client_id() == client_id && e.request.id() == command_id
+        }) {
+            let unsynced = self.nezha.unsynced_log.remove(pos);
+            let mut request = unsynced.request;
+            request.set_deadline(new_deadline);
+            self.nezha.synced_log.push(SyncedLogEntry {
+                request,
+                result: None,
+            });
+        }
     }
 
 
@@ -699,14 +785,34 @@ where
     where
         T: serde::Serialize,
     {
-        let synced_bytes = bincode::serialize(&self.nezha.synced_log)
-            .expect("Failed to serialize synced_log for hashing");
-        self.nezha.hash_synced_log(&synced_bytes);
-        self.nezha.synced_hash
+        // XOR-incremental hash: XOR of SHA1(serialize(request)) for each synced entry.
+        // Matches the follower's formula so hashes agree when ordering is consistent.
+        let mut hash = [0u8; 20];
+        for entry in &self.nezha.synced_log {
+            let bytes = bincode::serialize(&entry.request)
+                .expect("Failed to serialize synced entry for hashing");
+            let mut hasher = Sha1::new();
+            hasher.update(&bytes);
+            let result = hasher.finalize();
+            let mut entry_hash = [0u8; 20];
+            entry_hash.copy_from_slice(&result);
+            xor_hash(&mut hash, &entry_hash);
+        }
+        self.nezha.synced_hash = hash;
+        hash
     }
 
     pub(crate) fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<Option<String>>) {
         self.nezha.append_synced_log(entry, result)
+    }
+
+    /// Returns a copy of the committed (synced) Nezha log entries as (request, result) pairs.
+    #[cfg(feature = "serde")]
+    pub(crate) fn get_synced_log(&self) -> Vec<(T, Option<Option<String>>)>
+    where
+        T: Clone,
+    {
+        self.nezha.synced_log.iter().map(|e| (e.request.clone(), e.result.clone())).collect()
     }
 
     /// Returns the current simulated time from the shared clock, in microseconds since UNIX_EPOCH.
@@ -733,9 +839,9 @@ where
         if let Some(top) = self.early_buffer.first() {
             let current_time = self.clock.get_time();
 
-            if top.deadline() > current_time {
-                // Future deadline: Calculate how long to wait (+ uncertainty for safety)
-                let wait_time = top.deadline() - current_time;
+            if top.deadline() + self.clock.get_uncertainty() > current_time {
+                // Wait until deadline + uncertainty so the entry is fully safe to release
+                let wait_time = (top.deadline() + self.clock.get_uncertainty() - current_time).max(0);
                 Some(wait_time)
             } else {
                 // The deadline has already passed! We should wake up immediately (0 wait time)
@@ -763,17 +869,28 @@ where
     where
         T: serde::Serialize,
     {
-        let synced_bytes = bincode::serialize(&self.nezha.synced_log)
-            .expect("Failed to serialize synced_log for hashing");
-        let unsynced_bytes = bincode::serialize(&self.nezha.unsynced_log)
-            .expect("Failed to serialize unsynced_log for hashing");
-
-        self.nezha.hash_synced_log(&synced_bytes);
-        self.nezha.hash_unsynced_log(&unsynced_bytes);
-
-        let mut reply_hash = self.nezha.synced_hash;
-        xor_hash(&mut reply_hash, &self.nezha.unsynced_hash);
-        reply_hash
+        let mut hash = [0u8; 20];
+        for entry in &self.nezha.synced_log {
+            let bytes = bincode::serialize(&entry.request)
+                .expect("Failed to serialize synced entry for hashing");
+            let mut hasher = Sha1::new();
+            hasher.update(&bytes);
+            let result = hasher.finalize();
+            let mut entry_hash = [0u8; 20];
+            entry_hash.copy_from_slice(&result);
+            xor_hash(&mut hash, &entry_hash);
+        }
+        for entry in &self.nezha.unsynced_log {
+            let bytes = bincode::serialize(&entry.request)
+                .expect("Failed to serialize unsynced entry for hashing");
+            let mut hasher = Sha1::new();
+            hasher.update(&bytes);
+            let result = hasher.finalize();
+            let mut entry_hash = [0u8; 20];
+            entry_hash.copy_from_slice(&result);
+            xor_hash(&mut hash, &entry_hash);
+        }
+        hash
     }
 
 }
