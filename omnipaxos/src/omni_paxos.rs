@@ -25,11 +25,32 @@ use std::{
 #[cfg(feature = "toml_config")]
 use toml;
 
+/// Represents the hash (in SHA1) of a given log entry
+pub type FastHash = [u8; 20];
+
+/// Represents the released entry from the early buffer together with the index of its entry, and hash.
+#[derive(Debug)]
+pub struct ReleasedEntry<T> {
+    /// The log entry
+    pub entry: T,
+    /// The log-id indicating the index of where this entry resides in the log
+    pub log_id: usize,
+    /// A hash of the follower's current Nezha state after inserting this entry
+    /// into `unsynced_log`.
+    ///
+    /// For the follower, it is computed from the current `synced_log` and
+    /// `unsynced_log` state after the insertion.
+    ///
+    /// This is `Some(...)` for followers, which can compute it immediately, and
+    /// `None` for leaders, where it is populated later.
+    pub hash: Option<FastHash>,
+}
+
 /// Result returned by `process_early_buffer()`.
 #[derive(Debug)]
-pub struct EarlyBufferResult<T> {
+pub struct ProcessEarlyBufferResult<T> {
     /// Entries popped from the early buffer in this processing round.
-    pub popped_entries: Vec<T>,
+    pub released_entries: Vec<ReleasedEntry<T>>,
     /// The leader ballot at processing time when this node is in `(Leader, Accept)`.
     pub leader_exec_epoch: Option<Ballot>,
 }
@@ -271,6 +292,16 @@ where
     pub fn sync_clock(&mut self) {
         self.seq_paxos.sync_clock();
     }
+
+    /// Recomputes and returns the current hash of the follower's synced Nezha log.
+    #[cfg(feature = "serde")]
+    pub fn hash_synced_log(&mut self) -> FastHash
+    where
+        T: serde::Serialize,
+    {
+        self.seq_paxos.hash_synced_log()
+    }
+
 }
 
 impl<T, B> OmniPaxos<T, B>
@@ -381,11 +412,19 @@ where
 
     /// Checks the early_buffer and processes any messages whose deadlines have passed.
     /// This should be called periodically by your tick() function.
-    pub fn process_early_buffer(&mut self) -> EarlyBufferResult<T> {
-        let internal_result = self.seq_paxos.process_early_buffer();
-        EarlyBufferResult {
-            popped_entries: internal_result.popped_entries,
-            leader_exec_epoch: internal_result.leader_exec_epoch,
+    #[cfg(feature = "serde")]
+    pub fn process_early_buffer(&mut self) -> ProcessEarlyBufferResult<T>
+    where
+        T: serde::Serialize,
+    {
+        let internal = self.seq_paxos.process_early_buffer();
+        ProcessEarlyBufferResult {
+            released_entries: internal.released_entries.into_iter().map(|r| ReleasedEntry {
+                entry: r.entry,
+                log_id: r.log_id,
+                hash: r.hash,
+            }).collect(),
+            leader_exec_epoch: internal.leader_exec_epoch,
         }
     }
 

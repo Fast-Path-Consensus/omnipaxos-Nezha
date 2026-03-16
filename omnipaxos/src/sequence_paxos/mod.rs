@@ -20,10 +20,65 @@ use crate::clock::ClockSimulator;
 pub mod follower;
 pub mod leader;
 
+type FastHash = [u8; 20];
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+struct SyncedLogEntry<T> {
+    request: T,
+    result: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+struct UnsyncedLogEntry<T> {
+    request: T,
+}
+
+#[derive(Debug, Clone)]
+struct NezhaState<T> {
+    synced_log: Vec<SyncedLogEntry<T>>,
+    unsynced_log: Vec<UnsyncedLogEntry<T>>,
+    synced_hash: FastHash,
+    unsynced_hash: FastHash,
+}
+
+impl<T> NezhaState<T> {
+    fn hash_unsynced_log(&mut self, unsynced_bytes: &[u8]) {
+        let mut hasher = Sha1::new();
+        hasher.update(unsynced_bytes);
+        let unsynced_result = hasher.finalize();
+        self.unsynced_hash.copy_from_slice(&unsynced_result);
+    }
+
+    fn hash_synced_log(&mut self, synced_bytes: &[u8]) {
+        let mut hasher = Sha1::new();
+        hasher.update(synced_bytes);
+        let synced_result = hasher.finalize();
+        self.synced_hash.copy_from_slice(&synced_result);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ReleasedEntry<T> {
+    pub entry: T,
+    /// The index at which we modified the log.
+    pub log_id: usize,
+    /// A hash of the follower's current Nezha state after inserting this entry
+    /// into `unsynced_log` or `synced_log`.
+    ///
+    /// For the follower, it is computed from the current `synced_log` and
+    /// `unsynced_log` state after the insertion.
+    ///
+    /// This is `Some(...)` for followers, which can compute it immediately, and
+    /// `None` for leaders, where it is populated later.
+    pub hash: Option<FastHash>,
+}
+
 
 #[derive(Debug)]
 pub(crate) struct ProcessEarlyBufferResult<T> {
-    pub popped_entries: Vec<T>,
+    pub released_entries: Vec<ReleasedEntry<T>>,
     pub leader_exec_epoch: Option<Ballot>,
 }
 
@@ -56,6 +111,7 @@ where
     late_buffer: Vec<T>,
 
     last_popped_deadline: i64,
+    nezha: NezhaState<T>,
 
 }
 
@@ -76,13 +132,7 @@ where
 
 use crate::storage::StorageResult;
 
-
-
-
-
-
-
-
+use sha1::{Digest, Sha1};
 impl<T, B> SequencePaxos<T, B>
 where
     T: Entry,
@@ -153,6 +203,12 @@ where
             late_buffer: Vec::new(),
             last_popped_deadline: 0,
             clock,
+            nezha: NezhaState {
+                synced_log: Vec::new(),
+                unsynced_log: Vec::new(),
+                synced_hash: [0u8; 20],
+                unsynced_hash: [0u8; 20],
+            },
         };
         paxos
             .internal_storage
@@ -540,11 +596,15 @@ where
 
     /// Checks the early_buffer and processes any messages whose deadlines have passed.
     /// This should be called periodically by your tick() function.
-    pub(crate) fn process_early_buffer(&mut self) -> ProcessEarlyBufferResult<T> {
+    #[cfg(feature = "serde")]
+    pub(crate) fn process_early_buffer(&mut self) -> ProcessEarlyBufferResult<T>
+    where
+        T: serde::Serialize,
+    {
         let current_time = self.clock.get_time();
         let uncertainty = self.clock.get_uncertainty();
-        let mut popped_entries: Vec<T> = Vec::new(); // send to kv
         let mut entries_to_fast_append: Vec<T> = Vec::new(); // append to log
+        let mut released_entries : Vec<ReleasedEntry<T>> = Vec::new();
 
         let leader_exec_epoch = match self.state {
             (Role::Leader, Phase::Accept) => Some(self.get_promise()),
@@ -566,25 +626,66 @@ where
 
                 // Prepare for log append and return
                 entries_to_fast_append.push(popped_entry.clone());
-                popped_entries.push(popped_entry);
+
             } else {
                 // The earliest deadline is still within its uncertainty window
                 break;
             }
         }
 
-        if !entries_to_fast_append.is_empty() {
-            let _ = self.append_local_only(entries_to_fast_append).expect("Appending to (fast-path) replica failed!");
+        // Nothing to do
+        if entries_to_fast_append.is_empty() {
+            return ProcessEarlyBufferResult {
+                released_entries,
+                leader_exec_epoch,
+            };
+        }
+        let num_entries_to_fast_append = entries_to_fast_append.len();
+
+        let last_log_id_in_full_log = self
+            .append_local_only(entries_to_fast_append.clone())
+            .expect("Appending to fast-path replica failed!");
+
+        let first_log_id_from_fast_append = last_log_id_in_full_log - num_entries_to_fast_append + 1;
+
+        // Build a ReleaseEntry for every appended element.
+        for (offset, entry) in entries_to_fast_append.into_iter().enumerate() {
+            let log_id = first_log_id_from_fast_append + offset; // Offset initially 0
+
+            let hash =
+                if leader_exec_epoch.is_some() { // Cannot calculate hash of Leader's entry yet as it requires synced_log.
+                None
+            }
+                else {
+                Some(self.finalize_follower_release(&entry))
+            };
+
+            released_entries.push(ReleasedEntry {
+                entry,
+                log_id,
+                hash,
+            });
         }
 
         ProcessEarlyBufferResult {
-            popped_entries,
+            released_entries,
             leader_exec_epoch,
         }
     }
 
     pub(crate) fn append_local_only(&mut self, entries: Vec<T>) -> StorageResult<usize>{
         self.internal_storage.append_entries_without_batching(entries)
+    }
+
+    #[cfg(feature = "serde")]
+    pub(crate) fn hash_synced_log(&mut self) -> FastHash
+    where
+        T: serde::Serialize,
+    {
+        let synced_bytes = bincode::serialize(&self.nezha.synced_log)
+            .expect("Failed to serialize synced_log for hashing");
+        self.nezha.hash_synced_log(&synced_bytes);
+        self.nezha.synced_hash
     }
 
     /// Returns the current simulated time from the shared clock, in microseconds since UNIX_EPOCH.
@@ -624,12 +725,43 @@ where
         }
     }
 
+    /// Returns a hash of type FastHash for the follower as part of what will become its fast-reply.
+    #[cfg(feature = "serde")]
+    fn finalize_follower_release(&mut self, entry: &T) -> FastHash
+    where
+        T: serde::Serialize,
+    {
+        self.nezha.unsynced_log.push(UnsyncedLogEntry {
+            request: entry.clone(),
+        });
+        self.compute_follower_log_hash()
+    }
 
+    #[cfg(feature = "serde")]
+    fn compute_follower_log_hash(&mut self) -> FastHash
+    where
+        T: serde::Serialize,
+    {
+        let synced_bytes = bincode::serialize(&self.nezha.synced_log)
+            .expect("Failed to serialize synced_log for hashing");
+        let unsynced_bytes = bincode::serialize(&self.nezha.unsynced_log)
+            .expect("Failed to serialize unsynced_log for hashing");
 
+        self.nezha.hash_synced_log(&synced_bytes);
+        self.nezha.hash_unsynced_log(&unsynced_bytes);
 
+        let mut reply_hash = self.nezha.synced_hash;
+        xor_hash(&mut reply_hash, &self.nezha.unsynced_hash);
+        reply_hash
+    }
 
 }
 
+fn xor_hash(a: &mut FastHash, b: &FastHash) {
+    for i in 0..20 {
+        a[i] ^= b[i];
+    }
+}
 
 #[derive(PartialEq, Debug)]
 pub(crate) enum Phase {
