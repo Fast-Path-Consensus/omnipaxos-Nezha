@@ -577,25 +577,41 @@ where
 
 
 
-    pub(crate) fn process_late_buffer(&mut self) -> Vec<(u64, usize, i64)> {
-        let mut sync_info = Vec::new();
+    pub(crate) fn process_late_buffer(&mut self) -> Vec<ReleasedEntry<T>> {
+        let mut released_info = Vec::new();
         let current_time = self.clock.get_time();
+
+        // 1. Establish the baseline safe deadline for this batch
+        let mut next_ddl = std::cmp::max(current_time, self.last_popped_deadline + 1);
 
         let late_entries: Vec<T> = self.late_buffer.drain(..).collect();
         for mut entry in late_entries {
-            // 1. Create the new deadline
-            let new_ddl = std::cmp::max(current_time, self.last_popped_deadline + 1);
+            // 2. Assign the uniquely tracked deadline
+            entry.set_deadline(next_ddl);
 
-            // 2. Extract info for the triple (The "Necessary Stuff")
-            sync_info.push((entry.client_id(), entry.id(), new_ddl));
+            released_info.push(ReleasedEntry {
+                entry: entry.clone(),
+                log_id: 0,
+                hash: None,
+            });
 
-            // 3. Update the entry itself so the Leader's EB handles it correctly
-            entry.set_deadline(new_ddl);
             self.early_buffer.push(entry);
+
+            // 3. Increment for the next entry to guarantee strictly increasing
+            // physical time within this batch, leaving self.last_popped_deadline alone!
+            next_ddl += 1;
         }
 
-        self.early_buffer.sort_by(|a, b| a.deadline().cmp(&b.deadline()));
-        sync_info
+        // 4. Sort by deadline, using the paper's mandatory tie-breaker (Client ID + Request ID)
+        if !released_info.is_empty() {
+            self.early_buffer.sort_by(|a, b| {
+                a.deadline().cmp(&b.deadline())
+                    .then_with(|| a.client_id().cmp(&b.client_id()))
+                    .then_with(|| a.id().cmp(&b.id()))
+            });
+        }
+
+        released_info
     }
 
 
