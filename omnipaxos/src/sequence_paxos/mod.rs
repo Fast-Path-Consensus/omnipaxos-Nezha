@@ -26,7 +26,7 @@ type FastHash = [u8; 20];
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 struct SyncedLogEntry<T> {
     request: T,
-    result: Option<String>,
+    result: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,7 +58,7 @@ impl<T> NezhaState<T> {
         self.synced_hash.copy_from_slice(&synced_result);
     }
 
-    fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<String>) {
+    fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<Option<String>>) {
         self.synced_log.push(SyncedLogEntry {
             request: entry.entry,
             result,
@@ -695,7 +695,7 @@ where
         self.nezha.synced_hash
     }
 
-    pub(crate) fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<String>) {
+    pub(crate) fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<Option<String>>) {
         self.nezha.append_synced_log(entry, result)
     }
 

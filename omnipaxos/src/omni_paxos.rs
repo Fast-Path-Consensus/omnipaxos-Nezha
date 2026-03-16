@@ -303,7 +303,7 @@ where
     }
 
     /// Appends an entry together with its result to the synced_log.
-    pub fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<String>) {
+    pub fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<Option<String>>) {
         self.seq_paxos.append_synced_log(
             crate::sequence_paxos::ReleasedEntry {
                 entry: entry.entry,
