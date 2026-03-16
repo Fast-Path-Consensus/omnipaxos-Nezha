@@ -3,12 +3,19 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// Errors that can occur when creating a [`ClockSimulator`].
 #[derive(Debug)]
 pub enum ClockSimError {
+    /// The drift rate was negative.
+    ///
+    /// Contains the invalid drift rate.
+    NegativeDriftRate(f64),
     /// The uncertainty value was negative.
+    ///
+    /// Contains the invalid uncertainty value in microseconds.
     NegativeUncertainty(i64),
     /// The sync interval was zero.
+    ///
+    /// A clock must resynchronize at a strictly positive interval.
     ZeroSyncInterval,
-    /// The drift rate was negative.
-    NegativeDriftRate(f64),
+
 }
 
 /// A clock simulator that models a synchronized clock with configurable drift and uncertainty.
@@ -38,6 +45,7 @@ impl ClockSimulator {
             return Err(ClockSimError::NegativeDriftRate(drift_rate));
         }
 
+        // Current C_i(t) reading
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -54,9 +62,11 @@ impl ClockSimulator {
 
     /// Returns the current simulated time in microseconds since UNIX_EPOCH.
     pub fn get_time(&self) -> i64 {
-        let elapsed_real_secs = self.last_sync_system.elapsed().as_secs_f64();
+        let elapsed_real_secs = self.last_sync_system.elapsed().as_secs_f64(); // True deltaT, real time passed (not C_i(t))
         let drift_offset = (elapsed_real_secs * self.drift_rate) as i64;
         let elapsed_real_micros = (elapsed_real_secs * 1_000_000.0) as i64;
+
+        // Simulated time = Last Synced Time + Real Elapsed (in micros) + Drift
         self.last_sync_simulated + elapsed_real_micros + drift_offset
     }
 
@@ -65,7 +75,9 @@ impl ClockSimulator {
         self.uncertainty
     }
 
-    /// Resynchronizes the simulated clock to the current system time, resetting accumulated drift.
+    /// Resynchronizes the simulated clock to current system time, resetting accumulated drift.
+    /// Resets the [`ClockSimulator::last_sync_simulated`] to time since UNIX_EPOCH in microseconds.
+    /// Resets the [`ClockSimulator::last_sync_system`] to Instant::now().
     pub fn sync_clock(&mut self) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
