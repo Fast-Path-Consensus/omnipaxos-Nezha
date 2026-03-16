@@ -67,6 +67,10 @@ pub trait Entry: Clone + Debug {
     fn id(&self) -> usize {
         0
     }
+
+    /// Sets a new deadline for this entry (in microseconds).
+    /// No-op by default.
+    fn set_deadline(&mut self, _deadline: i64) {}
 }
 
 /// A StopSign entry that marks the end of a configuration. Used for reconfiguration.
