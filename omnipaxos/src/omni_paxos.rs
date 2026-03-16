@@ -27,6 +27,10 @@ use toml;
 
 /// Represents the hash (in SHA1) of a given log entry
 pub type FastHash = [u8; 20];
+/// Represents the Command ID
+pub type CommandId = usize;
+/// Represents the Client ID
+pub type ClientId = u64;
 
 /// Represents the released entry from the early buffer together with the index of its entry, and hash.
 #[derive(Debug)]
@@ -316,6 +320,16 @@ where
         );
     }
 
+    /// Returns all entries in the committed (synced) Nezha log as (request, result) pairs.
+    /// All replicas should converge to the same list if consensus is correct.
+    #[cfg(feature = "serde")]
+    pub fn get_synced_log(&self) -> Vec<(T, Option<Option<String>>)>
+    where
+        T: Clone,
+    {
+        self.seq_paxos.get_synced_log()
+    }
+
 }
 
 impl<T, B> OmniPaxos<T, B>
@@ -468,6 +482,21 @@ where
             log_id: r.log_id,
             hash: r.hash,
         }).collect()
+    }
+
+    /// Nezha Slow Path on followers: repair log to match the leader's modification.
+    #[cfg(feature = "serde")]
+    pub fn handle_log_modification(
+        &mut self,
+        client_id: u64,
+        command_id: usize,
+        new_deadline: i64,
+        leader_log_id: usize,
+    ) -> Option<usize>
+    where
+        T: serde::Serialize,
+    {
+        self.seq_paxos.handle_log_modification(client_id, command_id, new_deadline, leader_log_id)
     }
 
 
