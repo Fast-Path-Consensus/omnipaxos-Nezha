@@ -26,7 +26,7 @@ type FastHash = [u8; 20];
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 struct SyncedLogEntry<T> {
     request: T,
-    result: Option<Option<String>>,
+    result: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +61,7 @@ impl<T> NezhaState<T> {
     fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<String>) {
         self.synced_log.push(SyncedLogEntry {
             request: entry.entry,
-            result: Some(result),
+            result,
         });
     }
 }
