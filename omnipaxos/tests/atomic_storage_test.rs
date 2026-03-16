@@ -20,6 +20,7 @@ use omnipaxos::storage::Entry;
 #[cfg(feature = "unicache")]
 use omnipaxos::unicache::UniCache;
 use omnipaxos::{
+    clock::ClockConfig,
     messages::{
         ballot_leader_election::{BLEMessage, HeartbeatMsg, HeartbeatReply},
         sequence_paxos::{AcceptSync, PaxosMessage, PaxosMsg, Prepare, Promise},
@@ -60,7 +61,7 @@ fn basic_setup() -> (
     op_config.cluster_config.nodes = (1..=cfg.num_nodes as NodeId).collect();
     op_config.cluster_config.configuration_id = 1;
     op_config.server_config.election_tick_timeout = 1; // set tick timeout to 1 as we need to trigger leader change when we call tick() in the tests.
-    let op = op_config.build(storage).unwrap();
+    let op = op_config.build(storage, ClockConfig::low().build()).unwrap();
     (mem_storage, storage_conf, op)
 }
 
