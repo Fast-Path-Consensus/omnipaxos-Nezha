@@ -571,17 +571,24 @@ where
         } else {
             // 3. No conflict: Push and sort
             self.early_buffer.push(d_req);
-            self.early_buffer.sort_by(|a, b| a.deadline().cmp(&b.deadline()));
+            self.early_buffer.sort_by(|a, b| {
+                a.deadline().cmp(&b.deadline())
+                    .then_with(|| a.client_id().cmp(&b.client_id()))
+                    .then_with(|| a.id().cmp(&b.id()))
+            });
         }
     }
 
 
-
-    pub(crate) fn process_late_buffer(&mut self) -> Vec<(u64, usize, i64)> {
-        let mut sync_info = Vec::new();
+    /// Nezha Slow Path: Leader re-sequences late requests.
+    pub(crate) fn process_late_buffer(&mut self) -> Vec<ReleasedEntry<T>> {
+        let mut released_info = Vec::new();
         let current_time = self.clock.get_time();
         // Running base so each entry gets a strictly-increasing new deadline.
         let mut last_assigned = self.last_popped_deadline;
+
+        // 1. Establish the baseline safe deadline for this batch
+        let mut next_ddl = std::cmp::max(current_time, self.last_popped_deadline + 1);
 
         let late_entries: Vec<T> = self.late_buffer.drain(..).collect();
         for mut entry in late_entries {
@@ -592,11 +599,6 @@ where
 
             entry.set_deadline(new_ddl);
             self.early_buffer.push(entry);
-        }
-
-        self.early_buffer.sort_by(|a, b| a.deadline().cmp(&b.deadline()));
-        sync_info
-    }
 
     /// Slow path: follower receives a log-modification triple from the leader.
     #[cfg(feature = "serde")]
@@ -690,7 +692,17 @@ where
     }
 
 
+        // 4. Sort by deadline, using the paper's mandatory tie-breaker (Client ID + Request ID)
+        if !released_info.is_empty() {
+            self.early_buffer.sort_by(|a, b| {
+                a.deadline().cmp(&b.deadline())
+                    .then_with(|| a.client_id().cmp(&b.client_id()))
+                    .then_with(|| a.id().cmp(&b.id()))
+            });
+        }
 
+        released_info
+    }
 
 
     /// Checks the early_buffer and processes any messages whose deadlines have passed.
@@ -776,6 +788,7 @@ where
         }
     }
 
+    
     pub(crate) fn append_local_only(&mut self, entries: Vec<T>) -> StorageResult<usize>{
         self.internal_storage.append_entries_without_batching(entries)
     }
@@ -838,15 +851,13 @@ where
     pub(crate) fn time_until_next_early_buffer_deadline(&self) -> Option<i64> {
         if let Some(top) = self.early_buffer.first() {
             let current_time = self.clock.get_time();
+            let uncertainty = self.clock.get_uncertainty();
 
-            if top.deadline() + self.clock.get_uncertainty() > current_time {
-                // Wait until deadline + uncertainty so the entry is fully safe to release
-                let wait_time = (top.deadline() + self.clock.get_uncertainty() - current_time).max(0);
-                Some(wait_time)
-            } else {
-                // The deadline has already passed! We should wake up immediately (0 wait time)
-                Some(0)
-            }
+            // Calculate the true release time by adding the safety window
+            let wait_time = top.deadline() + uncertainty - current_time;
+
+            // Use .max(0) to ensure we never return a negative sleep duration
+            Some(wait_time.max(0))
         } else {
             None
         }
