@@ -1,5 +1,6 @@
 use crate::{
     ballot_leader_election::{Ballot, BallotLeaderElection},
+    clock::{ClockConfig, ClockSimulator},
     errors::{valid_config, ConfigError},
     messages::Message,
     sequence_paxos::{Phase, SequencePaxos},
@@ -67,7 +68,9 @@ impl OmniPaxosConfig {
     }
 
     /// Checks all configuration fields and returns the local OmniPaxos node if successful.
-    pub fn build<T, B>(self, storage: B) -> Result<OmniPaxos<T, B>, ConfigError>
+    /// The `clock` parameter is the single [`ClockSimulator`] instance that will be used
+    /// by both the caller and the internal OmniPaxos algorithm for all time readings.
+    pub fn build<T, B>(self, storage: B, clock: ClockSimulator) -> Result<OmniPaxos<T, B>, ConfigError>
     where
         T: Entry,
         B: Storage<T>,
@@ -84,7 +87,7 @@ impl OmniPaxosConfig {
                 self.server_config.resend_message_tick_timeout,
             ),
             flush_batch_clock: LogicalClock::with(self.server_config.flush_batch_tick_timeout),
-            seq_paxos: SequencePaxos::with(self.into(), storage),
+            seq_paxos: SequencePaxos::with(self.into(), storage, clock),
         })
     }
 }
@@ -150,11 +153,12 @@ impl ClusterConfig {
         T: Entry,
         B: Storage<T>,
     {
+        let clock = server_config.clock.clone().build();
         let op_config = OmniPaxosConfig {
             cluster_config: self,
             server_config,
         };
-        op_config.build(with_storage)
+        op_config.build(with_storage, clock)
     }
 }
 
@@ -196,56 +200,6 @@ pub struct ServerConfig {
     pub clock: ClockConfig,
 }
 
-/// Represents a given clock configuration.
-///
-/// Supports low-, medium-, and high-quality profiles.
-#[derive(Clone, Debug, Default)]
-#[cfg_attr(any(feature = "serde", feature = "toml_config"), derive(Deserialize))]
-#[cfg_attr(feature = "toml_config", serde(default))]
-#[cfg_attr(feature = "serde", derive(Serialize))]
-pub struct ClockConfig {
-    /// Clock drift rate in microseconds.
-    pub drift_us_per_s: f64,
-    /// Clock uncertainty in microseconds.
-    pub uncertainty: i64,
-    /// Clock sync interval in milliseconds.
-    pub sync_interval_ms: u64,
-}
-
-impl ClockConfig {
-    /// Clock Profile: Low Quality
-    ///
-    /// ±1ms uncertainty, 100ms sync interval
-    pub fn low() -> Self {
-        Self {
-            drift_us_per_s: 2.0,
-            uncertainty: 1000,
-            sync_interval_ms: 100,
-        }
-    }
-
-    /// Clock Profile: Medium Quality
-    ///
-    /// ±100μs uncertainty, 10ms sync interval
-    pub fn medium() -> Self {
-        Self {
-            drift_us_per_s: 5.0,
-            uncertainty: 100,
-            sync_interval_ms: 10,
-        }
-    }
-
-    /// Clock Profile: High Quality
-    ///
-    /// ±10μs uncertainty, 1ms sync interval
-    pub fn high() -> Self {
-        Self {
-            drift_us_per_s: 10.0,
-            uncertainty: 10,
-            sync_interval_ms: 1,
-        }
-    }
-}
 
 impl ServerConfig {
     /// Checks that all the fields of the server config are valid.
@@ -296,6 +250,27 @@ where
     election_clock: LogicalClock,
     resend_message_clock: LogicalClock,
     flush_batch_clock: LogicalClock,
+}
+
+impl<T, B> OmniPaxos<T, B>
+where
+    T: Entry,
+    B: Storage<T>,
+{
+    /// Returns the current simulated time from the shared clock, in microseconds since UNIX_EPOCH.
+    pub fn get_time(&self) -> i64 {
+        self.seq_paxos.get_time()
+    }
+
+    /// Returns the clock's uncertainty window in microseconds.
+    pub fn get_uncertainty(&self) -> i64 {
+        self.seq_paxos.get_uncertainty()
+    }
+
+    /// Resynchronizes the shared clock to the current system time, resetting accumulated drift.
+    pub fn sync_clock(&mut self) {
+        self.seq_paxos.sync_clock();
+    }
 }
 
 impl<T, B> OmniPaxos<T, B>

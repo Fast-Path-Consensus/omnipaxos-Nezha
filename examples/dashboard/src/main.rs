@@ -1,5 +1,5 @@
 use crate::{entry::LogEntry, server::OmniPaxosServer, util::*};
-use omnipaxos::{ClusterConfig, OmniPaxos, OmniPaxosConfig, ServerConfig};
+use omnipaxos::{clock::ClockConfig, ClusterConfig, OmniPaxos, OmniPaxosConfig, ServerConfig};
 use omnipaxos_storage::memory_storage::MemoryStorage;
 use omnipaxos_ui::OmniPaxosUI;
 use std::{
@@ -54,7 +54,7 @@ fn main() {
             omni_paxos_ui.start();
         }
         let omni_paxos: Arc<Mutex<OmniPaxosLog>> = Arc::new(Mutex::new(
-            op_config.build(MemoryStorage::default()).unwrap(),
+            op_config.build(MemoryStorage::default(), ClockConfig::low().build()).unwrap(),
         ));
         let mut op_server = OmniPaxosServer {
             omni_paxos_ui,

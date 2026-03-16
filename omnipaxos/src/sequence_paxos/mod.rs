@@ -15,8 +15,7 @@ use crate::{
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
 use std::{fmt::Debug, vec};
-use std::time::Duration;
-use crate::clock::{ClockSimulator, ClockSimError};
+use crate::clock::ClockSimulator;
 
 pub mod follower;
 pub mod leader;
@@ -91,7 +90,7 @@ where
 {
     /*** User functions ***/
     /// Creates a Sequence Paxos replica.
-    pub(crate) fn with(config: SequencePaxosConfig, storage: B) -> Self {
+    pub(crate) fn with(config: SequencePaxosConfig, storage: B, clock: ClockSimulator) -> Self {
         let pid = config.pid;
         let peers = config.peers;
         let num_nodes = &peers.len() + 1;
@@ -153,11 +152,7 @@ where
             early_buffer: Vec::new(),
             late_buffer: Vec::new(),
             last_popped_deadline: 0,
-            clock: ClockSimulator::new(
-                config.clock_drift_us_per_s, // Values based on profile in OmniPaxos_rs.
-                config.clock_uncertainty_us,
-                config.clock_sync_interval_ms,
-            ).expect("REASON"),
+            clock,
         };
         paxos
             .internal_storage
@@ -567,6 +562,21 @@ where
         self.internal_storage.append_entries_without_batching(entries)
     }
 
+    /// Returns the current simulated time from the shared clock, in microseconds since UNIX_EPOCH.
+    pub(crate) fn get_time(&self) -> i64 {
+        self.clock.get_time()
+    }
+
+    /// Returns the clock's uncertainty window in microseconds.
+    pub(crate) fn get_uncertainty(&self) -> i64 {
+        self.clock.get_uncertainty()
+    }
+
+    /// Resynchronizes the shared clock to the current system time.
+    pub(crate) fn sync_clock(&mut self) {
+        self.clock.sync_clock();
+    }
+
 
 
     /// Returns the number of microseconds until the next message in the early_buffer expires.
@@ -630,9 +640,6 @@ pub(crate) struct SequencePaxosConfig {
     #[cfg(feature = "logging")]
     custom_logger: Option<Logger>,
 
-    clock_drift_us_per_s: f64,
-    clock_uncertainty_us: i64,
-    clock_sync_interval_ms: Duration,
 }
 
 impl From<OmniPaxosConfig> for SequencePaxosConfig {
@@ -655,9 +662,6 @@ impl From<OmniPaxosConfig> for SequencePaxosConfig {
             #[cfg(feature = "logging")]
             custom_logger: config.server_config.custom_logger,
 
-            clock_drift_us_per_s: config.server_config.clock.drift_us_per_s,
-            clock_uncertainty_us: config.server_config.clock.uncertainty,
-            clock_sync_interval_ms: Duration::from_millis(config.server_config.clock.sync_interval_ms),
         }
     }
 }

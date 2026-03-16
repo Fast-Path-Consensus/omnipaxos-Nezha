@@ -2,6 +2,7 @@ use self::omnireplica::OmniPaxosComponent;
 use kompact::{config_keys::system, executors::crossbeam_workstealing_pool, prelude::*};
 use omnipaxos::{
     ballot_leader_election::Ballot,
+    clock::ClockConfig,
     macros::*,
     messages::Message,
     storage::{Entry, Snapshot, Storage, StorageResult},
@@ -500,7 +501,7 @@ impl TestSystem {
                 OmniPaxosComponent::with(
                     pid,
                     op_config.server_config.buffer_size,
-                    op_config.build(storage).unwrap(),
+                    op_config.build(storage, ClockConfig::low().build()).unwrap(),
                     test_config.election_timeout,
                 )
             });
@@ -569,7 +570,7 @@ impl TestSystem {
                 OmniPaxosComponent::with(
                     pid,
                     op_config.server_config.buffer_size,
-                    op_config.build(storage).unwrap(),
+                    op_config.build(storage, ClockConfig::low().build()).unwrap(),
                     test_config.election_timeout,
                 )
             });

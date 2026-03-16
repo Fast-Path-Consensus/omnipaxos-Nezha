@@ -1,6 +1,9 @@
 #[test]
 fn build_op_test() {
-    use omnipaxos::{macros::Entry, ClusterConfig, OmniPaxos, OmniPaxosConfig, ServerConfig};
+    use omnipaxos::{
+        clock::ClockConfig, macros::Entry, ClusterConfig, OmniPaxos, OmniPaxosConfig,
+        ServerConfig,
+    };
     use omnipaxos_storage::memory_storage::MemoryStorage;
 
     #[derive(Clone, Debug, Entry)]
@@ -24,5 +27,7 @@ fn build_op_test() {
     };
 
     let _omnipaxos: OmniPaxos<TestEntry, MemoryStorage<TestEntry>> =
-        config.build(MemoryStorage::default()).unwrap();
+        config
+            .build(MemoryStorage::default(), ClockConfig::low().build())
+            .unwrap();
 }

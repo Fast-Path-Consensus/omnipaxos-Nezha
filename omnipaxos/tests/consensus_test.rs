@@ -2,6 +2,7 @@ pub mod utils;
 
 use kompact::prelude::{promise, Ask, FutureCollection};
 use omnipaxos::{
+    clock::ClockConfig,
     storage::{Snapshot, StopSign, Storage},
     ClusterConfig, OmniPaxosConfig,
 };
@@ -87,7 +88,10 @@ fn read_test() {
     op_config.cluster_config.nodes = vec![1, 2, 3];
     op_config.cluster_config.configuration_id = 1;
 
-    let mut omni_paxos = op_config.clone().build(storage).unwrap();
+    let mut omni_paxos = op_config
+        .clone()
+        .build(storage, ClockConfig::low().build())
+        .unwrap();
 
     // read decided entries
     let entries = omni_paxos
@@ -137,7 +141,9 @@ fn read_test() {
         .set_decided_idx(log_len + 1)
         .expect("Failed to set decided index");
 
-    let mut stopped_op = op_config.build(stopped_storage).unwrap();
+    let mut stopped_op = op_config
+        .build(stopped_storage, ClockConfig::low().build())
+        .unwrap();
     stopped_op
         .snapshot(Some(snapshotted_idx), true)
         .expect("Failed to snapshot");
@@ -175,7 +181,10 @@ fn read_entries_test() {
     op_config.cluster_config.nodes = vec![1, 2, 3];
     op_config.cluster_config.configuration_id = 1;
 
-    let mut omni_paxos = op_config.clone().build(storage).unwrap();
+    let mut omni_paxos = op_config
+        .clone()
+        .build(storage, ClockConfig::low().build())
+        .unwrap();
     omni_paxos
         .snapshot(Some(snapshotted_idx), true)
         .expect("Failed to snapshot");
@@ -228,7 +237,9 @@ fn read_entries_test() {
     stopped_storage.set_stopsign(Some(ss.clone())).unwrap();
     stopped_storage.set_decided_idx(log_len + 1).unwrap();
 
-    let mut stopped_op = op_config.build(stopped_storage).unwrap();
+    let mut stopped_op = op_config
+        .build(stopped_storage, ClockConfig::low().build())
+        .unwrap();
     stopped_op
         .snapshot(Some(snapshotted_idx), true)
         .expect("Failed to snapshot");
