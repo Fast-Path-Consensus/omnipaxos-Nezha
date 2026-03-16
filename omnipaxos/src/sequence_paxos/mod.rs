@@ -528,7 +528,7 @@ where
             let new_ddl = std::cmp::max(current_time, self.last_popped_deadline + 1);
 
             // 2. Extract info for the triple (The "Necessary Stuff")
-            sync_info.push((entry.client_id(), entry.request_id(), new_ddl));
+            sync_info.push((entry.client_id(), entry.id(), new_ddl));
 
             // 3. Update the entry itself so the Leader's EB handles it correctly
             entry.set_deadline(new_ddl);
