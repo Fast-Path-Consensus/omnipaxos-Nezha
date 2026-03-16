@@ -785,15 +785,13 @@ where
     pub(crate) fn time_until_next_early_buffer_deadline(&self) -> Option<i64> {
         if let Some(top) = self.early_buffer.first() {
             let current_time = self.clock.get_time();
+            let uncertainty = self.clock.get_uncertainty();
 
-            if top.deadline() > current_time {
-                // Future deadline: Calculate how long to wait (+ uncertainty for safety)
-                let wait_time = top.deadline() - current_time;
-                Some(wait_time)
-            } else {
-                // The deadline has already passed! We should wake up immediately (0 wait time)
-                Some(0)
-            }
+            // Calculate the true release time by adding the safety window
+            let wait_time = top.deadline() + uncertainty - current_time;
+
+            // Use .max(0) to ensure we never return a negative sleep duration
+            Some(wait_time.max(0))
         } else {
             None
         }
