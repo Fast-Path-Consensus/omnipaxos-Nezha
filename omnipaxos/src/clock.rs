@@ -19,11 +19,10 @@ pub enum ClockSimError {
 }
 
 /// A clock simulator that models a synchronized clock with configurable drift and uncertainty.
+/// Sync is driven externally — call [`ClockSimulator::sync_clock`] periodically to bound drift.
 pub struct ClockSimulator {
     drift_rate: f64,           // microseconds per second
     uncertainty: i64,          // microseconds
-    #[allow(dead_code)]
-    sync_interval: Duration,   // the configured sync interval (informational)
     last_sync_system: Instant, // monotonic reference point at last sync
     last_sync_simulated: i64,  // simulated clock reading at last sync (µs since UNIX_EPOCH)
 }
@@ -54,7 +53,6 @@ impl ClockSimulator {
         Ok(Self {
             drift_rate,
             uncertainty,
-            sync_interval,
             last_sync_system: Instant::now(),
             last_sync_simulated: now,
         })
@@ -115,29 +113,29 @@ impl ClockConfig {
         .expect("Invalid clock configuration")
     }
 
-    /// Low-drift, low-uncertainty profile for well-synchronized networks.
+    /// High-quality clock: ±10µs uncertainty, 1ms sync interval.
     pub fn low() -> Self {
         Self {
             drift_us_per_s: 0.0,
-            uncertainty: 100,
-            sync_interval_ms: 1000,
+            uncertainty: 10,
+            sync_interval_ms: 1,
         }
     }
 
-    /// Medium-drift profile.
+    /// Medium-quality clock: ±100µs uncertainty, 10ms sync interval.
     pub fn medium() -> Self {
+        Self {
+            drift_us_per_s: 1.0,
+            uncertainty: 100,
+            sync_interval_ms: 10,
+        }
+    }
+
+    /// Low-quality clock: ±1000µs uncertainty, 100ms sync interval.
+    pub fn high() -> Self {
         Self {
             drift_us_per_s: 10.0,
             uncertainty: 1000,
-            sync_interval_ms: 500,
-        }
-    }
-
-    /// High-drift, high-uncertainty profile for poorly synchronized clocks.
-    pub fn high() -> Self {
-        Self {
-            drift_us_per_s: 100.0,
-            uncertainty: 10000,
             sync_interval_ms: 100,
         }
     }
