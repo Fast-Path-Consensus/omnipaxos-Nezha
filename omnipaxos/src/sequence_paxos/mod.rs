@@ -704,44 +704,7 @@ where
     }
 
 
-
-    /// Nezha Slow Path: Follower applies a batch of resequencing decisions from the leader.
-    pub(crate) fn resequence_batch(&mut self, batch: Vec<(u64, usize, i64)>) {
-        let mut moved_any = false; // to see if we need to re sort everything or not
-        for (client_id, req_id, new_ddl) in batch {
-            // 1. Find the index of the message using the composite ID (Client + Request)
-            let entry_idx = self.late_buffer.iter().position(|e| {
-                e.client_id() == client_id && e.id() == req_id
-            });
-            if let Some(pos) = entry_idx {
-                // 2. Remove it from the late_buffer
-                let mut entry = self.late_buffer.remove(pos);
-
-                // 3. Update the entry's deadline to the leader's decided new_ddl
-                entry.set_deadline(new_ddl);
-
-                // 4. Move it to the early_buffer
-                self.early_buffer.push(entry);
-                moved_any = true;
-
-            }
-        }
-        // 5. CRITICAL PERFORMANCE FIX: Sort only once after the whole batch is processed
-        if moved_any {
-            self.early_buffer.sort_by(|a, b| {
-                a.deadline().cmp(&b.deadline())
-                    .then_with(|| a.client_id().cmp(&b.client_id()))
-                    .then_with(|| a.id().cmp(&b.id()))
-            });
-        }
-    }
-
-
-
-
-
-
-
+    
 
     pub(crate) fn append_local_only(&mut self, entries: Vec<T>) -> StorageResult<usize>{
         self.internal_storage.append_entries_without_batching(entries)
