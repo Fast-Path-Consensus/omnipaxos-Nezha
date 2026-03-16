@@ -571,12 +571,17 @@ where
         } else {
             // 3. No conflict: Push and sort
             self.early_buffer.push(d_req);
-            self.early_buffer.sort_by(|a, b| a.deadline().cmp(&b.deadline()));
+            self.early_buffer.sort_by(|a, b| {
+                a.deadline().cmp(&b.deadline())
+                    .then_with(|| a.client_id().cmp(&b.client_id()))
+                    .then_with(|| a.id().cmp(&b.id()))
+            });
         }
     }
 
 
-
+    /// Nezha Slow Path: Leader re-sequences late requests.
+    /// Returns a list of 3-tuples (client_id, request_id, new_deadline) to be broadcast.
     pub(crate) fn process_late_buffer(&mut self) -> Vec<ReleasedEntry<T>> {
         let mut released_info = Vec::new();
         let current_time = self.clock.get_time();
@@ -723,7 +728,11 @@ where
         }
         // 5. CRITICAL PERFORMANCE FIX: Sort only once after the whole batch is processed
         if moved_any {
-            self.early_buffer.sort_by(|a, b| a.deadline().cmp(&b.deadline()));
+            self.early_buffer.sort_by(|a, b| {
+                a.deadline().cmp(&b.deadline())
+                    .then_with(|| a.client_id().cmp(&b.client_id()))
+                    .then_with(|| a.id().cmp(&b.id()))
+            });
         }
     }
 
