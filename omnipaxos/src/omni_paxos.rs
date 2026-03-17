@@ -474,6 +474,7 @@ where
 
     /// Follower applies a LogModification from the leader.
     /// Returns the hash to include in the slow reply, or None if entry not found.
+    /// The `fallback_entry` is used if the entry isn't in local buffers (e.g., missed broadcast).
     #[cfg(feature = "serde")]
     pub fn apply_log_modification(
         &mut self,
@@ -481,11 +482,12 @@ where
         command_id: usize,
         new_deadline: i64,
         log_id: usize,
+        fallback_entry: T,
     ) -> Option<FastHash>
     where
         T: serde::Serialize,
     {
-        self.seq_paxos.apply_log_modification(client_id, command_id, new_deadline, log_id)
+        self.seq_paxos.apply_log_modification(client_id, command_id, new_deadline, log_id, fallback_entry)
     }
 
 

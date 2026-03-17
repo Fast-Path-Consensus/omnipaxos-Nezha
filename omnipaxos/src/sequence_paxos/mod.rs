@@ -652,6 +652,7 @@ where
         command_id: usize,
         new_deadline: i64,
         log_id: usize,
+        fallback_entry: T,
     ) -> Option<FastHash>
     where
         T: serde::Serialize,
@@ -709,7 +710,13 @@ where
             }
         }
         
-        // 3. If found, update deadline and append to log
+        // 3. If not in buffers, use the fallback entry from LogModification
+        //    This handles the case where follower missed the original broadcast (per Nezha paper)
+        if found_entry.is_none() {
+            found_entry = Some(fallback_entry);
+        }
+        
+        // 4. Update deadline and append to log
         if let Some(mut entry) = found_entry {
             entry.set_deadline(new_deadline);
             
@@ -726,7 +733,7 @@ where
             return Some(hash);
         }
         
-        // Entry not found - may have already been processed or not yet received
+        // Should never reach here since we always have fallback_entry
         None
     }
 
