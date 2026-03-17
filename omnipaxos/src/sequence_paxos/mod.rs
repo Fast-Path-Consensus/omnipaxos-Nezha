@@ -642,6 +642,69 @@ where
         released_info
     }
 
+    /// Follower applies a LogModification from the leader.
+    /// Finds the request in late_buffer or early_buffer, updates its deadline,
+    /// appends to log, and returns the hash for the slow reply.
+    #[cfg(feature = "serde")]
+    pub(crate) fn apply_log_modification(
+        &mut self,
+        client_id: u64,
+        command_id: usize,
+        new_deadline: i64,
+        _log_id: usize, // Reserved for future use (log position verification)
+    ) -> Option<FastHash>
+    where
+        T: serde::Serialize,
+    {
+        // 1. Try to find in late_buffer first
+        let mut found_entry: Option<T> = None;
+        let mut found_idx: Option<usize> = None;
+        
+        for (i, entry) in self.late_buffer.iter().enumerate() {
+            if entry.client_id() == client_id && entry.id() == command_id {
+                found_idx = Some(i);
+                break;
+            }
+        }
+        
+        if let Some(idx) = found_idx {
+            found_entry = Some(self.late_buffer.remove(idx));
+        }
+        
+        // 2. If not in late_buffer, try early_buffer
+        if found_entry.is_none() {
+            for (i, entry) in self.early_buffer.iter().enumerate() {
+                if entry.client_id() == client_id && entry.id() == command_id {
+                    found_idx = Some(i);
+                    break;
+                }
+            }
+            if let Some(idx) = found_idx {
+                found_entry = Some(self.early_buffer.remove(idx));
+            }
+        }
+        
+        // 3. If found, update deadline and append to log
+        if let Some(mut entry) = found_entry {
+            entry.set_deadline(new_deadline);
+            
+            // Update last_popped_deadline if this deadline is larger
+            if new_deadline > self.last_popped_deadline {
+                self.last_popped_deadline = new_deadline;
+            }
+            
+            // Append to log
+            let _ = self.append_local_only(vec![entry.clone()]);
+            
+            // Update hash and return
+            let hash = self.update_and_get_log_hash(&entry);
+            return Some(hash);
+        }
+        
+        // Entry not found - may have already been processed or not yet received
+        None
+    }
+
 
     /// Checks the early_buffer and processes any messages whose deadlines have passed.
     /// This should be called periodically by your tick() function.

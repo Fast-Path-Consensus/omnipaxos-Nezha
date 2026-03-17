@@ -472,6 +472,22 @@ where
         }).collect()
     }
 
+    /// Follower applies a LogModification from the leader.
+    /// Returns the hash to include in the slow reply, or None if entry not found.
+    #[cfg(feature = "serde")]
+    pub fn apply_log_modification(
+        &mut self,
+        client_id: u64,
+        command_id: usize,
+        new_deadline: i64,
+        log_id: usize,
+    ) -> Option<FastHash>
+    where
+        T: serde::Serialize,
+    {
+        self.seq_paxos.apply_log_modification(client_id, command_id, new_deadline, log_id)
+    }
+
 
     /// Propose a cluster reconfiguration. Returns an error if the current configuration has already been stopped
     /// by a previous reconfiguration request or if the `new_configuration` is invalid.
