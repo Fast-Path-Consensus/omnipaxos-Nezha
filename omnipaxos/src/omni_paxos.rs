@@ -320,6 +320,12 @@ where
         );
     }
 
+    /// Promotes an entry from the unsynced log to the synced log on followers.
+    /// Used after the fast path to mark entries as confirmed.
+    pub fn promote_to_synced(&mut self, client_id: u64, command_id: usize, deadline: i64) {
+        self.seq_paxos.promote_unsynced_to_synced(client_id, command_id, deadline);
+    }
+
     /// Returns all entries in the committed (synced) Nezha log as (request, result) pairs.
     /// All replicas should converge to the same list if consensus is correct.
     #[cfg(feature = "serde")]

@@ -542,40 +542,23 @@ where
     }
 
     fn handle_deadlined_request(&mut self, d_req: T) {
-        let uncertainty = self.clock.get_uncertainty();
         let d_time = d_req.deadline();
 
-        // 1. Check if it's too close to what was already popped (Safety Wall)
-        if d_time <= self.last_popped_deadline  {
-            self.late_buffer.push(d_req);
-            return;
-        }
-
-        // 2. Linear check for conflicts within the early_buffer
-        let has_conflict = self.early_buffer.iter().any(|buffered_msg| {
-            (d_time - buffered_msg.deadline()).abs() <= uncertainty
-        });
-
-        if has_conflict {
-            // Move all conflicting entries to late_buffer
-            let mut i = 0;
-            while i < self.early_buffer.len() {
-                if (d_time - self.early_buffer[i].deadline()).abs() <= uncertainty {
-                    let removed = self.early_buffer.remove(i);
-                    self.late_buffer.push(removed);
-                } else {
-                    i += 1;
-                }
-            }
-            self.late_buffer.push(d_req);
-        } else {
-            // 3. No conflict: Push and sort
+        // Algorithm 1 (paper §5): insert into early-buffer iff deadline is
+        // strictly greater than the last released deadline; otherwise late-buffer.
+        // Uncertainty is applied only at the *release* stage in process_early_buffer
+        // (release rule: current_time >= deadline + uncertainty), NOT here.
+        if d_time > self.last_popped_deadline {
             self.early_buffer.push(d_req);
+            // Keep early-buffer sorted by (deadline, client_id, request_id) —
+            // footnote 4: ties broken by <client-id, request-id>.
             self.early_buffer.sort_by(|a, b| {
                 a.deadline().cmp(&b.deadline())
                     .then_with(|| a.client_id().cmp(&b.client_id()))
                     .then_with(|| a.id().cmp(&b.id()))
             });
+        } else {
+            self.late_buffer.push(d_req);
         }
     }
 
@@ -690,7 +673,7 @@ where
 
     /// Moves the entry identified by (client_id, command_id) from `unsynced_log`
     /// to `synced_log`, updating its deadline to the leader-assigned value.
-    fn promote_unsynced_to_synced(&mut self, client_id: u64, command_id: usize, new_deadline: i64) {
+    pub(crate) fn promote_unsynced_to_synced(&mut self, client_id: u64, command_id: usize, new_deadline: i64) {
         if let Some(pos) = self.nezha.unsynced_log.iter().position(|e| {
             e.request.client_id() == client_id && e.request.id() == command_id
         }) {
