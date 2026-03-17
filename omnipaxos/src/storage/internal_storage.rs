@@ -531,4 +531,33 @@ where
     pub(crate) fn set_unicache(&mut self, unicache: T::UniCache) {
         self.state_cache.unicache = unicache;
     }
+
+    /// Replace the entry at `index` with `new_entry`.
+    /// Used by Nezha slow path to repair deadline mismatches.
+    pub(crate) fn replace_entry_at(&mut self, index: usize, new_entry: T) -> StorageResult<()> {
+        let accepted_idx = self.get_accepted_idx();
+        if index >= accepted_idx {
+            // Index out of bounds - nothing to replace
+            return Ok(());
+        }
+        
+        // Get entries after the one we're replacing
+        let suffix = if index + 1 < accepted_idx {
+            self.storage.get_suffix(index + 1)?
+        } else {
+            Vec::new()
+        };
+        
+        // Build new entries: [new_entry] + suffix
+        let mut new_entries = vec![new_entry];
+        new_entries.extend(suffix);
+        
+        // Replace from index onwards
+        self.storage.write_atomically(vec![
+            StorageOp::AppendOnPrefix(index, new_entries),
+        ])?;
+        
+        // accepted_idx stays the same since we're replacing, not adding
+        Ok(())
+    }
 }

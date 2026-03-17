@@ -661,21 +661,62 @@ where
         
         // Check if we already have an entry at log_id position
         if log_id < current_log_len {
-            // Log already has entry at this position - check for consistency
+            // Log already has entry at this position - check for consistency per paper §5.4
             if let Ok(entries) = self.internal_storage.get_entries(log_id, log_id + 1) {
                 if let Some(existing) = entries.first() {
                     if existing.client_id() == client_id && existing.id() == command_id {
-                        // Same entry already at position - idempotent, just return current hash
-                        return Some(self.get_log_hash());
+                        // Case (1) or (2): Same <client-id, request-id>
+                        if existing.deadline() == new_deadline {
+                            // Case (1): Same 3-tuple - already consistent, just return current hash
+                            return Some(self.get_log_hash());
+                        } else {
+                            // Case (2): Same identity but different deadline
+                            // Paper says: "replace the deadline in its entry"
+                            
+                            // Create corrected entry with leader's deadline
+                            let mut corrected_entry = fallback_entry.clone();
+                            corrected_entry.set_deadline(new_deadline);
+                            
+                            // Actually replace the stored entry
+                            if self.internal_storage.replace_entry_at(log_id, corrected_entry.clone()).is_err() {
+                                #[cfg(feature = "logging")]
+                                warn!(self.logger, "Failed to replace entry at index {}", log_id);
+                                return None;
+                            }
+                            
+                            // Update hash: XOR out old, XOR in corrected
+                            self.nezha.update_log_hash(existing); // XOR out
+                            self.nezha.update_log_hash(&corrected_entry); // XOR in
+                            
+                            return Some(self.get_log_hash());
+                        }
                     } else {
-                        // Different entry at position - log divergence, skip this modification
+                        // Case (3): Different <client-id, request-id> - wrong entry at this position
+                        // Paper §5.4: "the follower removes the wrong entry and tries to put the right one"
+                        // We have the correct entry in fallback_entry (from LogModification message)
+                        
                         #[cfg(feature = "logging")]
-                        warn!(
+                        info!(
                             self.logger,
-                            "Log divergence at position {}: expected ({}, {}), found ({}, {})",
-                            log_id, client_id, command_id, existing.client_id(), existing.id()
+                            "Repairing log at position {}: replacing ({}, {}) with ({}, {})",
+                            log_id, existing.client_id(), existing.id(), client_id, command_id
                         );
-                        return None;
+                        
+                        // Use fallback_entry as the correct entry (it has correct client_id, command_id, deadline)
+                        let correct_entry = fallback_entry.clone();
+                        
+                        // Replace the wrong entry with the correct one
+                        if self.internal_storage.replace_entry_at(log_id, correct_entry.clone()).is_err() {
+                            #[cfg(feature = "logging")]
+                            warn!(self.logger, "Failed to replace entry at index {}", log_id);
+                            return None;
+                        }
+                        
+                        // Update hash: XOR out wrong, XOR in correct
+                        self.nezha.update_log_hash(existing); // XOR out wrong entry
+                        self.nezha.update_log_hash(&correct_entry); // XOR in correct entry
+                        
+                        return Some(self.get_log_hash());
                     }
                 }
             }
