@@ -545,13 +545,14 @@ where
         let uncertainty = self.clock.get_uncertainty();
         let d_time = d_req.deadline();
 
-        // 1. Check if it's too close to what was already popped (Safety Wall)
-        if d_time <= self.last_popped_deadline  {
+        // 1. Paper rule: "the incoming request can enter early-buffer only
+        //    if its deadline is larger than the last released one from early-buffer"
+        if d_time <= self.last_popped_deadline {
             self.late_buffer.push(d_req);
             return;
         }
 
-        // 2. Linear check for conflicts within the early_buffer
+        // 2. Linear check for conflicts within the early_buffer (uncertainty used here for ordering ambiguity)
         let has_conflict = self.early_buffer.iter().any(|buffered_msg| {
             (d_time - buffered_msg.deadline()).abs() <= uncertainty
         });
@@ -624,7 +625,6 @@ where
         T: serde::Serialize,
     {
         let current_time = self.clock.get_time();
-        let uncertainty = self.clock.get_uncertainty();
         let mut entries_to_fast_append: Vec<T> = Vec::new(); // append to log
         let mut released_entries : Vec<ReleasedEntry<T>> = Vec::new();
 
@@ -640,19 +640,19 @@ where
             // Access the first element (the one with the earliest deadline)
             let first_deadline = self.early_buffer[0].deadline();
 
-            // Release Rule: Only process if current_time >= deadline + uncertainty
-            if first_deadline + uncertainty <= current_time {
+            // Paper rule: "It will be released at the deadline"
+            if first_deadline <= current_time {
                 // Remove the element from the front (index 0)
                 let popped_entry = self.early_buffer.remove(0);
 
-                // Update the last popped deadline safety wall
+                // Update the last popped deadline
                 self.last_popped_deadline = popped_entry.deadline();
 
                 // Prepare for log append and return
                 entries_to_fast_append.push(popped_entry.clone());
 
             } else {
-                // The earliest deadline is still within its uncertainty window
+                // Deadline not yet reached
                 break;
             }
         }
@@ -742,10 +742,9 @@ where
     pub(crate) fn time_until_next_early_buffer_deadline(&self) -> Option<i64> {
         if let Some(top) = self.early_buffer.first() {
             let current_time = self.clock.get_time();
-            let uncertainty = self.clock.get_uncertainty();
 
-            // Calculate the true release time by adding the safety window
-            let wait_time = top.deadline() + uncertainty - current_time;
+            // Paper: release at the deadline
+            let wait_time = top.deadline() - current_time;
 
             // Use .max(0) to ensure we never return a negative sleep duration
             Some(wait_time.max(0))
