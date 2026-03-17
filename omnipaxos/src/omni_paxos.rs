@@ -459,7 +459,11 @@ where
     }
 
     /// Nezha Slow Path: Leader re-sequences late requests
-    pub fn process_late_buffer(&mut self) -> Vec<ReleasedEntry<T>> {
+    #[cfg(feature = "serde")]
+    pub fn process_late_buffer(&mut self) -> Vec<ReleasedEntry<T>>
+    where
+        T: serde::Serialize,
+    {
         let internal_entries = self.seq_paxos.process_late_buffer();
         internal_entries.into_iter().map(|r| ReleasedEntry {
             entry: r.entry,

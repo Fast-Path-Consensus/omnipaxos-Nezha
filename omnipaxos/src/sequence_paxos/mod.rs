@@ -584,34 +584,58 @@ where
 
 
     /// Nezha Slow Path: Leader re-sequences late requests.
-    pub(crate) fn process_late_buffer(&mut self) -> Vec<ReleasedEntry<T>> {
-        let mut released_info = Vec::new();
-        let current_time = self.clock.get_time();
-
-        // 1. Establish the baseline safe deadline for this batch
-        let mut next_ddl = std::cmp::max(current_time, self.last_popped_deadline + 1);
-
-        let late_entries: Vec<T> = self.late_buffer.drain(..).collect();
-        for mut entry in late_entries {
-            // 2. Assign the uniquely tracked deadline
-            entry.set_deadline(next_ddl);
-
-            released_info.push(ReleasedEntry {
-                entry: entry.clone(),
-                log_id: 0,
-                hash: None,
-            });
-
-            self.early_buffer.push(entry);
-
+    /// Assigns unique deadlines larger than last released, appends to log, returns entries for LogModification broadcast.
+    #[cfg(feature = "serde")]
+    pub(crate) fn process_late_buffer(&mut self) -> Vec<ReleasedEntry<T>>
+    where
+        T: serde::Serialize,
+    {
+        if self.late_buffer.is_empty() {
+            return Vec::new();
         }
 
-        // 4. Sort by deadline, using the paper's mandatory tie-breaker (Client ID + Request ID)
-        if !released_info.is_empty() {
-            self.early_buffer.sort_by(|a, b| {
-                a.deadline().cmp(&b.deadline())
-                    .then_with(|| a.client_id().cmp(&b.client_id()))
-                    .then_with(|| a.id().cmp(&b.id()))
+        let current_time = self.clock.get_time();
+        
+        // 1. Establish baseline safe deadline (must be > last_popped_deadline)
+        let mut next_ddl = std::cmp::max(current_time, self.last_popped_deadline + 1);
+
+        // 2. Assign unique deadlines to each late entry
+        let mut entries_to_append: Vec<T> = Vec::new();
+        for mut entry in self.late_buffer.drain(..) {
+            entry.set_deadline(next_ddl);
+            entries_to_append.push(entry);
+            next_ddl += 1; // Ensure each entry gets a unique deadline
+        }
+
+        // 3. Sort by deadline with paper's tie-breaker before appending
+        entries_to_append.sort_by(|a, b| {
+            a.deadline().cmp(&b.deadline())
+                .then_with(|| a.client_id().cmp(&b.client_id()))
+                .then_with(|| a.id().cmp(&b.id()))
+        });
+
+        let num_entries = entries_to_append.len();
+
+        // 4. Append directly to log (leader is sequencing, bypass early_buffer)
+        let last_log_id = self
+            .append_local_only(entries_to_append.clone())
+            .expect("Appending late entries to log failed!");
+
+        let first_log_id = last_log_id - num_entries + 1;
+
+        // 5. Update last_popped_deadline to the highest deadline we assigned
+        self.last_popped_deadline = next_ddl - 1;
+
+        // 6. Build ReleasedEntry with correct log_ids and hashes for LogModification broadcast
+        let mut released_info = Vec::with_capacity(num_entries);
+        for (offset, entry) in entries_to_append.into_iter().enumerate() {
+            let log_id = first_log_id + offset;
+            let hash = self.update_and_get_log_hash(&entry);
+
+            released_info.push(ReleasedEntry {
+                entry,
+                log_id,
+                hash: Some(hash),
             });
         }
 
