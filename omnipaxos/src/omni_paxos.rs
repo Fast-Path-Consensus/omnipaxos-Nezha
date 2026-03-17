@@ -295,13 +295,11 @@ where
         self.seq_paxos.sync_clock();
     }
 
-    /// Recomputes and returns the current hash of the follower's synced Nezha log.
-    #[cfg(feature = "serde")]
-    pub fn hash_synced_log(&mut self) -> FastHash
-    where
-        T: serde::Serialize,
-    {
-        self.seq_paxos.hash_synced_log()
+    /// Returns the current incremental log hash (XOR of all released entry hashes).
+    /// Same computation for leader and follower - produces identical hashes if they
+    /// have released the same entries.
+    pub fn get_log_hash(&self) -> FastHash {
+        self.seq_paxos.get_log_hash()
     }
 
     /// Appends an entry together with its result to the synced_log.

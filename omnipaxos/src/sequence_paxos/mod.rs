@@ -29,33 +29,37 @@ struct SyncedLogEntry<T> {
     result: Option<Option<String>>,
 }
 
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-struct UnsyncedLogEntry<T> {
-    request: T,
-}
-
+/// Nezha state for fast-path hash verification.
+/// Uses incremental XOR hashing: log_hash = XOR of SHA1(entry) for all released entries.
 #[derive(Debug, Clone)]
 struct NezhaState<T> {
+    /// Leader's synced log with execution results (for slow path / recovery)
     synced_log: Vec<SyncedLogEntry<T>>,
-    unsynced_log: Vec<UnsyncedLogEntry<T>>,
-    synced_hash: FastHash,
-    unsynced_hash: FastHash,
+    /// Incremental XOR hash of all released entries - same computation for leader and follower
+    log_hash: FastHash,
 }
 
 impl<T> NezhaState<T> {
-    fn hash_unsynced_log(&mut self, unsynced_bytes: &[u8]) {
+    /// Incrementally update log_hash by XORing with the hash of a new entry.
+    /// This is O(1) per entry and produces identical results on all replicas
+    /// that release the same entries.
+    #[cfg(feature = "serde")]
+    fn update_log_hash(&mut self, entry: &T)
+    where
+        T: serde::Serialize,
+    {
+        let entry_bytes = bincode::serialize(entry)
+            .expect("Failed to serialize entry for hashing");
         let mut hasher = Sha1::new();
-        hasher.update(unsynced_bytes);
-        let unsynced_result = hasher.finalize();
-        self.unsynced_hash.copy_from_slice(&unsynced_result);
+        hasher.update(&entry_bytes);
+        let entry_hash: [u8; 20] = hasher.finalize().into();
+        
+        // XOR the entry hash into the running log hash
+        xor_hash(&mut self.log_hash, &entry_hash);
     }
 
-    fn hash_synced_log(&mut self, synced_bytes: &[u8]) {
-        let mut hasher = Sha1::new();
-        hasher.update(synced_bytes);
-        let synced_result = hasher.finalize();
-        self.synced_hash.copy_from_slice(&synced_result);
+    fn get_log_hash(&self) -> FastHash {
+        self.log_hash
     }
 
     fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<Option<String>>) {
@@ -213,9 +217,7 @@ where
             clock,
             nezha: NezhaState {
                 synced_log: Vec::new(),
-                unsynced_log: Vec::new(),
-                synced_hash: [0u8; 20],
-                unsynced_hash: [0u8; 20],
+                log_hash: [0u8; 20],
             },
         };
         paxos
@@ -677,18 +679,14 @@ where
         for (offset, entry) in entries_to_fast_append.into_iter().enumerate() {
             let log_id = first_log_id_from_fast_append + offset; // Offset initially 0
 
-            let hash =
-                if leader_exec_epoch.is_some() { // Cannot calculate hash of Leader's entry yet as it requires synced_log.
-                None
-            }
-                else {
-                Some(self.finalize_follower_release(&entry))
-            };
+            // Update incremental log hash for this entry (same computation for leader and follower)
+            // Both store the progressive hash to ensure per-entry hash matching with proxies
+            let current_hash = self.update_and_get_log_hash(&entry);
 
             released_entries.push(ReleasedEntry {
                 entry,
                 log_id,
-                hash,
+                hash: Some(current_hash),
             });
         }
 
@@ -704,15 +702,21 @@ where
         self.internal_storage.append_entries_without_batching(entries)
     }
 
+    /// Update the incremental log hash with a new entry and return the current hash.
+    /// Used by both leader and follower when releasing entries - produces identical
+    /// results if they release the same entries in the same order.
     #[cfg(feature = "serde")]
-    pub(crate) fn hash_synced_log(&mut self) -> FastHash
+    pub(crate) fn update_and_get_log_hash(&mut self, entry: &T) -> FastHash
     where
         T: serde::Serialize,
     {
-        let synced_bytes = bincode::serialize(&self.nezha.synced_log)
-            .expect("Failed to serialize synced_log for hashing");
-        self.nezha.hash_synced_log(&synced_bytes);
-        self.nezha.synced_hash
+        self.nezha.update_log_hash(entry);
+        self.nezha.get_log_hash()
+    }
+
+    /// Get the current log hash without updating it.
+    pub(crate) fn get_log_hash(&self) -> FastHash {
+        self.nezha.get_log_hash()
     }
 
     pub(crate) fn append_synced_log(&mut self, entry: ReleasedEntry<T>, result: Option<Option<String>>) {
@@ -752,37 +756,6 @@ where
             None
         }
     }
-
-    /// Returns a hash of type FastHash for the follower as part of what will become its fast-reply.
-    #[cfg(feature = "serde")]
-    fn finalize_follower_release(&mut self, entry: &T) -> FastHash
-    where
-        T: serde::Serialize,
-    {
-        self.nezha.unsynced_log.push(UnsyncedLogEntry {
-            request: entry.clone(),
-        });
-        self.compute_follower_log_hash()
-    }
-
-    #[cfg(feature = "serde")]
-    fn compute_follower_log_hash(&mut self) -> FastHash
-    where
-        T: serde::Serialize,
-    {
-        let synced_bytes = bincode::serialize(&self.nezha.synced_log)
-            .expect("Failed to serialize synced_log for hashing");
-        let unsynced_bytes = bincode::serialize(&self.nezha.unsynced_log)
-            .expect("Failed to serialize unsynced_log for hashing");
-
-        self.nezha.hash_synced_log(&synced_bytes);
-        self.nezha.hash_unsynced_log(&unsynced_bytes);
-
-        let mut reply_hash = self.nezha.synced_hash;
-        xor_hash(&mut reply_hash, &self.nezha.unsynced_hash);
-        reply_hash
-    }
-
 }
 
 fn xor_hash(a: &mut FastHash, b: &FastHash) {
