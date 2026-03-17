@@ -571,7 +571,12 @@ where
         } else {
             // 3. No conflict: Push and sort
             self.early_buffer.push(d_req);
-            self.early_buffer.sort_by(|a, b| a.deadline().cmp(&b.deadline()));
+            // Paper footnote 4: tie-break equal deadlines by <client-id, request-id>
+            self.early_buffer.sort_by(|a, b| {
+                a.deadline().cmp(&b.deadline())
+                    .then_with(|| a.client_id().cmp(&b.client_id()))
+                    .then_with(|| a.id().cmp(&b.id()))
+            });
         }
     }
 
@@ -594,7 +599,12 @@ where
             self.early_buffer.push(entry);
         }
 
-        self.early_buffer.sort_by(|a, b| a.deadline().cmp(&b.deadline()));
+        // Paper footnote 4: tie-break equal deadlines by <client-id, request-id>
+        self.early_buffer.sort_by(|a, b| {
+            a.deadline().cmp(&b.deadline())
+                .then_with(|| a.client_id().cmp(&b.client_id()))
+                .then_with(|| a.id().cmp(&b.id()))
+        });
         sync_info
     }
 
