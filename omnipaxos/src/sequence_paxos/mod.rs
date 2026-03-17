@@ -651,11 +651,36 @@ where
         client_id: u64,
         command_id: usize,
         new_deadline: i64,
-        _log_id: usize, // Reserved for future use (log position verification)
+        log_id: usize,
     ) -> Option<FastHash>
     where
         T: serde::Serialize,
     {
+        let current_log_len = self.internal_storage.get_accepted_idx();
+        
+        // Check if we already have an entry at log_id position
+        if log_id < current_log_len {
+            // Log already has entry at this position - check for consistency
+            if let Ok(entries) = self.internal_storage.get_entries(log_id, log_id + 1) {
+                if let Some(existing) = entries.first() {
+                    if existing.client_id() == client_id && existing.id() == command_id {
+                        // Same entry already at position - idempotent, just return current hash
+                        return Some(self.get_log_hash());
+                    } else {
+                        // Different entry at position - log divergence, skip this modification
+                        #[cfg(feature = "logging")]
+                        warn!(
+                            self.logger,
+                            "Log divergence at position {}: expected ({}, {}), found ({}, {})",
+                            log_id, client_id, command_id, existing.client_id(), existing.id()
+                        );
+                        return None;
+                    }
+                }
+            }
+        }
+        
+        // Normal case: log shorter than log_id, find entry in buffers
         // 1. Try to find in late_buffer first
         let mut found_entry: Option<T> = None;
         let mut found_idx: Option<usize> = None;
