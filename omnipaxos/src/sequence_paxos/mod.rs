@@ -584,21 +584,34 @@ where
     pub(crate) fn process_late_buffer(&mut self) -> Vec<ReleasedEntry<T>> {
         let mut released_info = Vec::new();
         let current_time = self.clock.get_time();
-        // Running base so each entry gets a strictly-increasing new deadline.
         let mut last_assigned = self.last_popped_deadline;
-
-        // 1. Establish the baseline safe deadline for this batch
-        let mut next_ddl = std::cmp::max(current_time, self.last_popped_deadline + 1);
 
         let late_entries: Vec<T> = self.late_buffer.drain(..).collect();
         for mut entry in late_entries {
             let new_ddl = std::cmp::max(current_time, last_assigned + 1);
             last_assigned = new_ddl;
 
-            sync_info.push((entry.client_id(), entry.id(), new_ddl));
-
             entry.set_deadline(new_ddl);
-            self.early_buffer.push(entry);
+            self.early_buffer.push(entry.clone());
+
+            released_info.push(ReleasedEntry {
+                entry,
+                log_id: 0, // Will be assigned when appended to log
+                hash: None,
+            });
+        }
+
+        // Paper footnote 4: tie-break equal deadlines by <client-id, request-id>
+        if !released_info.is_empty() {
+            self.early_buffer.sort_by(|a, b| {
+                a.deadline().cmp(&b.deadline())
+                    .then_with(|| a.client_id().cmp(&b.client_id()))
+                    .then_with(|| a.id().cmp(&b.id()))
+            });
+        }
+
+        released_info
+    }
 
     /// Slow path: follower receives a log-modification triple from the leader.
     #[cfg(feature = "serde")]
@@ -689,19 +702,6 @@ where
                 result: None,
             });
         }
-    }
-
-
-        // 4. Sort by deadline, using the paper's mandatory tie-breaker (Client ID + Request ID)
-        if !released_info.is_empty() {
-            self.early_buffer.sort_by(|a, b| {
-                a.deadline().cmp(&b.deadline())
-                    .then_with(|| a.client_id().cmp(&b.client_id()))
-                    .then_with(|| a.id().cmp(&b.id()))
-            });
-        }
-
-        released_info
     }
 
 
